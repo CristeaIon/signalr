@@ -80,3 +80,9 @@ curl -X POST http://127.0.0.1:8080/mock/control/reset
 
 - **JVM** (no device): `./gradlew :app:testDebugUnitTest :mockserver:test :signalr:testDebugUnitTest`. `MockServerEndToEndTest` drives the real client and auth service over real sockets against an in-process mock server.
 - **On device** (emulator or phone): `./gradlew :app:connectedDebugAndroidTest`. `ChatFlowTest` drives the app's UI (login, chat, a second user, invokes, failure switches) against a mock server started inside the test on the device. No `./gradlew :mockserver:run` and no `adb reverse` needed. With a phone plugged in, set `ANDROID_SERIAL` to choose the device.
+
+## License
+
+Copyright 2026 Ion Cristea
+
+Licensed under the [MIT License](LICENSE).

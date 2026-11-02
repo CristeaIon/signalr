@@ -35,11 +35,11 @@ mavenPublishing {
         name.set("SignalR Kotlin")
         description.set("Lightweight SignalR Client library for Android and Kotlin")
         inceptionYear.set("2026")
-        url.set("https://github.com/CristeaIon/signalR")
+        url.set("https://github.com/CristeaIon/signalr.git")
         licenses {
             license {
-                name.set("The Apache License, Version 2.0")
-                url.set("https://www.apache.org/licenses/LICENSE-2.0.txt")
+                name.set("MIT License")
+                url.set("https://opensource.org/licenses/MIT")
                 distribution.set("repo")
             }
         }
@@ -51,9 +51,9 @@ mavenPublishing {
             }
         }
         scm {
-            connection.set("scm:git:git://github.com/CristeaIon/signalR.git")
-            developerConnection.set("scm:git:ssh://git@github.com/CristeaIon/signalR.git")
-            url.set("https://github.com/CristeaIon/signalR")
+            connection.set("scm:git:git://github.com/CristeaIon/signalr.git")
+            developerConnection.set("scm:git:ssh://git@github.com/CristeaIon/signalr.git")
+            url.set("https://github.com/CristeaIon/signalr")
         }
     }
 }
