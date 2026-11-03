@@ -1,8 +1,6 @@
 package io.github.cristeaion.signalr
 
 import kotlinx.serialization.KSerializer
-import kotlinx.serialization.SerialName
-import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -11,88 +9,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.serializer
 
-@Serializable
-data class HandshakeRequest(
-    val protocol: String = "json",
-    val version: Int = 1
-)
-
-@Serializable
-data class HandshakeResponse(
-    val error: String? = null
-)
-
-@Serializable
-data class HubMessageJson(
-    val type: Int = 0,
-    val invocationId: String? = null,
-    val target: String? = null,
-    val arguments: List<JsonElement>? = null,
-    val result: JsonElement? = null,
-    val error: String? = null
-)
-
-@Serializable
-data class ClassicHubInvocation(
-    val H: String? = null,
-    val M: String? = null,
-    val A: List<JsonElement>? = null,
-    val I: String? = null,
-    val R: JsonElement? = null,
-    val E: String? = null
-)
-
-@Serializable
-data class ClassicHubFrame(
-    val C: String? = null,
-    val M: List<ClassicHubInvocation>? = null,
-    val I: String? = null,
-    val R: JsonElement? = null,
-    val E: String? = null
-)
-
-@Serializable
-data class NegotiateResponse(
-    val connectionId: String? = null,
-    val connectionToken: String? = null,
-    val negotiateVersion: Int? = null,
-    val availableTransports: List<AvailableTransport>? = null,
-    val error: String? = null,
-    // Classic SignalR / alternative field names using @SerialName
-    @SerialName("ConnectionId")
-    val classicConnectionId: String? = null,
-    @SerialName("ConnectionToken")
-    val classicConnectionToken: String? = null,
-    @SerialName("Url")
-    val classicUrl: String? = null,
-    @SerialName("ProtocolVersion")
-    val protocolVersion: String? = null,
-    @SerialName("TryWebSockets")
-    val tryWebSockets: Boolean? = null,
-    val accessToken: String? = null
-) {
-    fun getEffectiveConnectionToken(): String? {
-        return connectionToken ?: classicConnectionToken ?: connectionId ?: classicConnectionId
-    }
-
-    fun getEffectiveConnectionId(): String? {
-        return connectionId ?: classicConnectionId ?: connectionToken ?: classicConnectionToken
-    }
-}
-
-@Serializable
-data class AvailableTransport(
-    val transport: String,
-    val transferFormats: List<String>
-)
-
-object SignalRProtocol {
+/** Encoding and decoding of SignalR wire frames, for both ASP.NET Core and classic servers. */
+internal object SignalRProtocol {
     const val RECORD_SEPARATOR = 0x1e.toChar()
-    val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-        isLenient = true
-    }
+    val json: Json get() = signalRJson
 
     fun createHandshakeMessage(): String {
         return json.encodeToString(HandshakeRequest.serializer(), HandshakeRequest()) + RECORD_SEPARATOR

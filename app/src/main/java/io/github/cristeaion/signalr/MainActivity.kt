@@ -36,6 +36,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -57,6 +58,9 @@ data class ChatEntry(
     val message: String
 )
 
+/** Lenient, like the library's own wire format, so hand-typed payloads parse. */
+private val payloadJson = Json { isLenient = true }
+
 fun SignalRLogLevel.toLogType(): LogType = when (this) {
     SignalRLogLevel.ERROR, SignalRLogLevel.WARN -> LogType.ERROR
     SignalRLogLevel.INFO, SignalRLogLevel.VERBOSE, SignalRLogLevel.DEBUG, SignalRLogLevel.NONE -> LogType.INFO
@@ -70,7 +74,7 @@ fun parseHubArgs(args: String): Array<Any> {
     val trimmed = args.trim()
     if (trimmed.isBlank()) return emptyArray()
     return try {
-        when (val element = SignalRProtocol.json.parseToJsonElement(trimmed)) {
+        when (val element = payloadJson.parseToJsonElement(trimmed)) {
             is JsonArray -> element.toTypedArray()
             else -> arrayOf(element)
         }
@@ -627,7 +631,7 @@ fun SignalRHubApp(
                         )
                         IconButton(
                             onClick = {
-                                onSendRequested("Send", "[${SignalRProtocol.json.encodeToString(String.serializer(), chatInput)}]", ::addLog)
+                                onSendRequested("Send", "[${payloadJson.encodeToString(String.serializer(), chatInput)}]", ::addLog)
                                 chatInput = ""
                             },
                             enabled = connectionState == HubConnectionState.CONNECTED && chatInput.isNotBlank()
