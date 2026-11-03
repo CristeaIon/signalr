@@ -12,37 +12,104 @@ dependencies {
 }
 ```
 
-## Publishing to Maven Central
+## Usage
 
-Publishing uses the [vanniktech maven-publish plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/central/) and uploads to the Sonatype Central Portal. You need:
+The client works with both **ASP.NET Core SignalR** and **classic ASP.NET SignalR 2.x** servers, over WebSockets with the JSON protocol. It treats a URL as classic when its path contains `/signalr` or its query has a `connectionData` parameter.
 
-- A Central Portal account with the `io.github.cristeaion` namespace verified, and a user token generated from it.
-- A GPG key for signing, with its public key uploaded to a keyserver (e.g. `keyserver.ubuntu.com`).
+### Create a connection
 
-Put the credentials in `~/.gradle/gradle.properties` (never in the repo):
-
-```properties
-mavenCentralUsername=<central-portal-token-username>
-mavenCentralPassword=<central-portal-token-password>
-
-signing.keyId=<last-8-chars-of-key-id>
-signing.password=<key-passphrase>
-signing.secretKeyRingFile=/Users/<you>/.gnupg/secring.gpg
+```kotlin
+val connection = HubConnectionBuilder.create("https://example.com/chathub")
+    .withAccessTokenProvider { authRepository.currentToken() } // sent as a Bearer header and as access_token
+    .withHeader("X-Client", "android")
+    .withLogger(AndroidSignalRLogger())                          // default: ConsoleSignalRLogger
+    .withLogLevel(SignalRLogLevel.INFO)
+    .withHandshakeTimeout(15_000)
+    .build()
 ```
 
-On CI, use environment variables instead: `ORG_GRADLE_PROJECT_mavenCentralUsername`, `ORG_GRADLE_PROJECT_mavenCentralPassword`, `ORG_GRADLE_PROJECT_signingInMemoryKey` (ASCII-armored private key), `ORG_GRADLE_PROJECT_signingInMemoryKeyId` and `ORG_GRADLE_PROJECT_signingInMemoryKeyPassword`.
+`connect()` calls `/negotiate` first. If the server accepts WebSockets directly and doesn't expose `/negotiate`, call `shouldSkipNegotiate(true)` on the builder.
 
-Then publish:
+### Connect and disconnect
 
-```bash
-# Upload and release automatically once validation passes
-./gradlew :signalr:publishAndReleaseToMavenCentral -PVERSION_NAME=1.0.0
+```kotlin
+lifecycleScope.launch {
+    connection.connectionState.collect { state -> /* DISCONNECTED, CONNECTING, CONNECTED */ }
+}
 
-# Or upload only, then release manually from https://central.sonatype.com/publishing
-./gradlew :signalr:publishToMavenCentral -PVERSION_NAME=1.0.0
+lifecycleScope.launch {
+    try {
+        connection.connect()
+    } catch (e: Exception) {
+        // negotiate, handshake or classic /start failed
+    }
+}
+
+// later
+connection.disconnect()
 ```
 
-Try it locally first with `./gradlew :signalr:publishToMavenLocal -PVERSION_NAME=1.0.0-SNAPSHOT`.
+`connect()`, `disconnect()`, `send()` and `invoke()` are `suspend` functions and throw their failures to the caller. Errors that happen with no caller waiting arrive on `errorFlow`: a dropped socket, an error frame from the server, or an exception thrown inside a handler.
+
+```kotlin
+connection.onError(lifecycleScope) { throwable -> Log.e("Hub", "SignalR error", throwable) }
+```
+
+### Receive server events
+
+Method names are matched case-insensitively. The typed overloads decode up to three arguments with kotlinx.serialization. If the server leaves an argument out or sends `null`, a nullable type receives `null` and a non-nullable primitive receives its default (`""`, `0`, `false`).
+
+```kotlin
+val sub = connection.on<String, String>("ReceiveMessage") { user, message ->
+    // runs on a background thread: switch to Main before touching UI
+}
+
+connection.on<ChatMessage>("NewMessage") { msg -> }        // any @Serializable type
+
+connection.on("UserJoined") { args: List<JsonElement> ->   // raw JSON arguments
+    val user = args.decodeArg<String>(0)
+}
+
+sub.cancel() // unregister that handler
+```
+
+You can also collect events as a `Flow`:
+
+```kotlin
+connection.onFlow<String, String>("ReceiveMessage")
+    .onEach { (user, message) -> }
+    .launchIn(lifecycleScope)
+
+connection.eventsFlow.collect { event -> /* every event: event.target, event.arguments */ }
+```
+
+> On classic connections, `onFlow` currently emits each push twice: once for `method` and once for `hub.method`. Use `on(...)` if that's a problem.
+
+### Call hub methods
+
+```kotlin
+connection.send("Send", "Hello!")                          // fire-and-forget
+
+val raw: JsonElement = connection.invoke("GetHistory")     // waits for the result
+val users: List<String> = connection.invoke<List<String>>("GetOnlineUsers")
+```
+
+Arguments can be primitives, `Map`s, collections, arrays, `JsonElement`s or `@Serializable` objects.
+
+### Classic SignalR 2.x
+
+Declare the hubs in the URL's `connectionData` parameter:
+
+```kotlin
+val url = "https://example.com/signalr?connectionData=" +
+    URLEncoder.encode("""[{"name":"chathub"}]""", "UTF-8")
+val connection = HubConnectionBuilder.create(url).build()
+```
+
+- If the connection declares one hub, a bare method name is sent to it: `send("Send", "hi")`.
+- If it declares several, qualify the name as `"chathub.Send"`. A bare name throws `IllegalArgumentException`.
+- You can also pass a ready-made envelope, `{"H":"chathub","M":"Send","A":["hi"]}`, as the method name or as the only argument.
+- Server pushes go to handlers registered under both `Method` and `hub.Method`.
 
 ## Run the example app offline
 
