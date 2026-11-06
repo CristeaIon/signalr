@@ -1,0 +1,121 @@
+name: Release
+
+# Every push to main runs the tests. If VERSION_NAME in gradle.properties has no matching
+# git tag yet, the library is published to Maven Central, then the tag and a GitHub release
+# (with the commits since the previous tag) are created. Already-tagged versions are skipped,
+# so ordinary pushes to main never re-publish.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: Publish & tag
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write # push tag + create GitHub release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history + tags for the changelog
+
+      - name: Resolve version
+        id: version
+        run: |
+          version=$(grep -E '^VERSION_NAME=' gradle.properties | cut -d= -f2 | tr -d '[:space:]')
+          if [ -z "$version" ]; then
+            echo "::error::VERSION_NAME is missing from gradle.properties"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if [[ "$version" == *-SNAPSHOT ]]; then
+            echo "::notice::$version is a SNAPSHOT — skipping release."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          elif git rev-parse -q --verify "refs/tags/$version" >/dev/null; then
+            echo "::notice::Tag $version already exists — bump VERSION_NAME to release. Skipping."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@v5
+        if: steps.version.outputs.release == 'true'
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: gradle/actions/setup-gradle@v5
+        if: steps.version.outputs.release == 'true'
+
+      - name: Publish to Maven Central
+        if: steps.version.outputs.release == 'true'
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          ./gradlew :signalr:publishAndReleaseToMavenCentral \
+            -PVERSION_NAME=${{ steps.version.outputs.version }} \
+            --no-configuration-cache --console=plain
+
+      - name: Build release notes
+        if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          previous=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || true)
+          {
+            echo "## Installation"
+            echo
+            echo '```kotlin'
+            echo "implementation(\"io.github.cristeaion:signalr:$VERSION\")"
+            echo '```'
+            echo
+            echo "## Changes"
+            echo
+            if [ -n "$previous" ]; then
+              git log --no-merges --pretty=format:'- %s (%h)' "$previous..HEAD"
+              echo
+              echo
+              echo "**Full changelog:** $REPO_URL/compare/$previous...$VERSION"
+            else
+              git log --no-merges --pretty=format:'- %s (%h)'
+              echo
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
+      - name: Create tag and GitHub release
+        if: steps.version.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$VERSION" -m "Release $VERSION"
+          git push origin "refs/tags/$VERSION"
+
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --notes-file release-notes.md \
+            --verify-tag \
+            signalr/build/outputs/aar/signalr-release.aar#signalr-$VERSION.aar
