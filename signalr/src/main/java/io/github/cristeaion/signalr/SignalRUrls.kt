@@ -56,7 +56,18 @@ internal fun extractClassicHubNames(baseUrl: String): List<String> {
  * must call /start over HTTP; only then does the server run OnConnected on each hub and begin
  * routing hub traffic to this connection.
  */
-internal fun getStartUrl(baseUrl: String, connectionToken: String?): String {
+internal fun getStartUrl(baseUrl: String, connectionToken: String?): String =
+    classicCommandUrl(baseUrl, connectionToken, "start")
+
+/**
+ * Classic SignalR's way to end a connection at once. Without it the server keeps a closed
+ * WebSocket's connection alive for its DisconnectTimeout (30s by default), waiting for the
+ * client to come back, and runs OnDisconnected only after that.
+ */
+internal fun getAbortUrl(baseUrl: String, connectionToken: String?): String =
+    classicCommandUrl(baseUrl, connectionToken, "abort")
+
+private fun classicCommandUrl(baseUrl: String, connectionToken: String?, command: String): String {
     val parts = baseUrl.split("?", limit = 2)
     val query = normalizeAndEncodeQuery(parts.getOrNull(1))
 
@@ -76,7 +87,7 @@ internal fun getStartUrl(baseUrl: String, connectionToken: String?): String {
     if (query?.contains("transport=") != true) params.add("transport=webSockets")
     if (query?.contains("clientProtocol=") != true) params.add("clientProtocol=1.5")
 
-    return "$mainUrl/start?${params.joinToString("&")}"
+    return "$mainUrl/$command?${params.joinToString("&")}"
 }
 
 internal fun getNegotiateUrl(baseUrl: String): String {

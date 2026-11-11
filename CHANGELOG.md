@@ -20,6 +20,16 @@ release may contain breaking changes; they are always listed under **Breaking**.
 - `on(...)` handlers no longer run on the socket reader. They run one at a time, in arrival
   order, on a background thread of their own. As a result, an `invoke()` result can now reach
   its caller before the handler for an event the server sent earlier has run.
+- The default `User-Agent` is now `signalr-kotlin/<version>`. It used to be a browser-like
+  string naming a company. If your server or firewall checks it, set your own with
+  `withHeader("User-Agent", ...)`.
+- The default log level is `WARN`; it used to be `DEBUG`. `ConsoleSignalRLogger()` also
+  defaults to `WARN`. Call `withLogLevel(...)` to see connection steps.
+- The library no longer depends on `androidx.appcompat`, `androidx.core-ktx` or
+  `com.google.android.material`. Apps that got them through this library, for example for a
+  `Theme.MaterialComponents` theme, must now declare them themselves.
+- An argument with no serializer now makes `send()` / `invoke()` throw
+  `IllegalArgumentException`. It used to be sent as `toString()`.
 - `connect()` called while a connect or reconnect is in progress now waits for that attempt.
   It returns when the attempt connects, or throws why it didn't. It used to return immediately
   while the state was still `CONNECTING`.
@@ -41,6 +51,10 @@ release may contain breaking changes; they are always listed under **Breaking**.
   calls, set with `withInvocationTimeout(ms)`. When time runs out, `invoke()` throws
   `InvocationTimeoutException` and the connection stays up.
 - `ConnectionLostException`. Its `cause` says why the connection dropped, when that's known.
+- Classic SignalR: `disconnect()` and `close()` send `/abort` (best effort, up to 2s), so the
+  server runs `OnDisconnected` at once instead of after its DisconnectTimeout. The server's
+  disconnect command (`"D":1`) ends the connection without reconnecting, and its reconnect
+  command (`"T":1`) drops the connection so automatic reconnect can restore it.
 - ASP.NET Core close messages (type 7) are now handled: the client disconnects, and reconnects
   only if the server sends `allowReconnect: true`. If the message has an error, it is emitted
   on `errorFlow`.

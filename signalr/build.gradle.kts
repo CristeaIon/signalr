@@ -4,6 +4,8 @@ plugins {
     alias(libs.plugins.vanniktech.maven.publish)
 }
 
+val libraryVersion = (project.findProperty("VERSION_NAME") as? String) ?: "1.0.0"
+
 android {
     namespace = "io.github.cristeaion.signalr"
     compileSdk {
@@ -12,8 +14,13 @@ android {
 
     defaultConfig {
         minSdk = 24
+        // Sent in the default User-Agent.
+        buildConfigField("String", "LIBRARY_VERSION", "\"$libraryVersion\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+    buildFeatures {
+        buildConfig = true
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
@@ -28,7 +35,7 @@ mavenPublishing {
     coordinates(
         groupId = (project.findProperty("GROUP") as? String) ?: "io.github.cristeaion",
         artifactId = (project.findProperty("POM_ARTIFACT_ID") as? String) ?: "signalr",
-        version = (project.findProperty("VERSION_NAME") as? String) ?: "1.0.0",
+        version = libraryVersion,
     )
 
     pom {
@@ -67,9 +74,6 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.core)
     
-    implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.material)
     testImplementation(libs.junit)
     testImplementation(libs.ktor.server.cio)
     testImplementation(libs.ktor.server.websockets)

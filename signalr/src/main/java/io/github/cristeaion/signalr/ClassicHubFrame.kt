@@ -10,5 +10,9 @@ internal data class ClassicHubFrame(
     val M: List<ClassicHubInvocation>? = null,
     val I: String? = null,
     val R: JsonElement? = null,
-    val E: String? = null
+    val E: String? = null,
+    /** `1`: the server ends the connection, and the client must not reconnect. */
+    val D: Int? = null,
+    /** `1`: the server asks the client to reconnect. */
+    val T: Int? = null,
 )

@@ -38,13 +38,19 @@ internal object SignalRProtocol {
             is Iterable<*> -> JsonArray(value.map { anyToJsonElement(it) })
             is Array<*> -> JsonArray(value.map { anyToJsonElement(it) })
             else -> {
-                try {
+                // Sending value.toString() instead would hand the server data it can't use, with
+                // nothing failing on this side.
+                val serializer = try {
                     @Suppress("UNCHECKED_CAST")
-                    val serializer = json.serializersModule.serializer(value::class.java) as KSerializer<Any>
-                    json.encodeToJsonElement(serializer, value)
+                    json.serializersModule.serializer(value::class.java) as KSerializer<Any>
                 } catch (e: Exception) {
-                    JsonPrimitive(value.toString())
+                    throw IllegalArgumentException(
+                        "Cannot send an argument of type ${value::class.qualifiedName}: annotate it with " +
+                            "@Serializable, or pass a primitive, Map, collection, array or JsonElement.",
+                        e,
+                    )
                 }
+                json.encodeToJsonElement(serializer, value)
             }
         }
     }

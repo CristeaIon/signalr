@@ -22,8 +22,9 @@ The client works with both **ASP.NET Core SignalR** and **classic ASP.NET Signal
 val connection = HubConnectionBuilder.create("https://example.com/chathub")
     .withAccessTokenProvider { authRepository.currentToken() } // sent as a Bearer header and as access_token
     .withHeader("X-Client", "android")
-    .withLogger(AndroidSignalRLogger())                          // default: ConsoleSignalRLogger
-    .withLogLevel(SignalRLogLevel.INFO)
+    .withHeader("User-Agent", "MyApp/2.1")                       // default: signalr-kotlin/<version>
+    .withLogger(AndroidSignalRLogger())                          // default: ConsoleSignalRLogger (stdout)
+    .withLogLevel(SignalRLogLevel.INFO)                          // default: WARN
     .withHandshakeTimeout(15_000)
     .withKeepAliveInterval(15_000)                               // ping when idle (Core servers); 0 = off
     .withServerTimeout(30_000)                                   // drop after this long without a message; 0 = off
@@ -33,7 +34,7 @@ val connection = HubConnectionBuilder.create("https://example.com/chathub")
 
 **Keep-alive.** On ASP.NET Core servers the client sends a ping whenever it hasn't sent anything for the keep-alive interval. If nothing arrives from the server within the server timeout, the client closes the connection, moves to `DISCONNECTED` and emits a `ServerTimeoutException` on `errorFlow`. Keep the server timeout at least twice the server's `KeepAliveInterval`. Classic servers send their own `{}` keep-alives and announce `KeepAliveTimeout` during negotiate. The client uses that value as its timeout and ignores `withServerTimeout`.
 
-**Logging.** Messages are built lazily, so a level you've turned off costs nothing. Tokens, session ids, URL query strings, hub-call arguments and server payloads are logged only at `VERBOSE`; `DEBUG` and above show method names and ids, never content. A custom `SignalRLogger` that filters by level should also override `isLoggable(level)`. Your own code can use the same lazy form: `logger.log(SignalRLogLevel.DEBUG, "Tag") { "expensive $value" }`.
+**Logging.** By default only `WARN` and `ERROR` are logged, to standard output. Use `withLogger(AndroidSignalRLogger())` for logcat, and raise the level with `withLogLevel` while debugging. Messages are built lazily, so a level you've turned off costs nothing. Tokens, session ids, URL query strings, hub-call arguments and server payloads are logged only at `VERBOSE`; `DEBUG` and above show method names and ids, never content. A custom `SignalRLogger` that filters by level should also override `isLoggable(level)`. Your own code can use the same lazy form: `logger.log(SignalRLogLevel.DEBUG, "Tag") { "expensive $value" }`.
 
 `connect()` calls `/negotiate` first. If the server accepts WebSockets directly and doesn't expose `/negotiate`, call `shouldSkipNegotiate(true)` on the builder.
 
@@ -146,7 +147,7 @@ val quick = connection.invoke<Quote>("GetQuote", "EURUSD", timeoutMs = 5_000) //
 
 Neither is a `CancellationException`, so they reach your `catch` and don't silently end the calling coroutine.
 
-Arguments can be primitives, `Map`s, collections, arrays, `JsonElement`s or `@Serializable` objects.
+Arguments can be primitives, `Map`s, collections, arrays, `JsonElement`s or `@Serializable` objects. For anything else, `send()` / `invoke()` throw `IllegalArgumentException` instead of sending it.
 
 ### Classic SignalR 2.x
 
@@ -162,6 +163,8 @@ val connection = HubConnectionBuilder.create(url).build()
 - If it declares several, qualify the name as `"chathub.Send"`. A bare name throws `IllegalArgumentException`.
 - You can also pass a ready-made envelope, `{"H":"chathub","M":"Send","A":["hi"]}`, as the method name or as the only argument.
 - Server pushes go to handlers registered under both `Method` and `hub.Method`.
+- `disconnect()` and `close()` send the server's `/abort` request, so it runs `OnDisconnected` right away instead of after its DisconnectTimeout. The request gets at most 2 seconds, so a dead network can't hold up `disconnect()` for long.
+- When the server sends the disconnect command (`"D":1`), the connection ends and isn't reconnected. When it sends the reconnect command (`"T":1`), the connection is dropped and, with `withAutomaticReconnect`, restored.
 
 ## Run the example app offline
 

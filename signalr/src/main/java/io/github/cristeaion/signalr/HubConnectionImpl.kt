@@ -44,6 +44,11 @@ import kotlin.time.Duration.Companion.milliseconds
 
 private const val TAG = "HubConnection"
 
+/** Sent unless the app sets its own `User-Agent` header. */
+private const val CLASSIC_ABORT_TIMEOUT_MS = 2_000L
+
+internal const val DEFAULT_USER_AGENT = "signalr-kotlin/${BuildConfig.LIBRARY_VERSION}"
+
 internal class HubConnectionImpl(
     private val client: HttpClient,
     private val baseUrl: String,
@@ -79,6 +84,10 @@ internal class HubConnectionImpl(
     private val lock = Any()
     @Volatile private var session: WebSocketSession? = null
     @Volatile private var clientScope: CoroutineScope? = null
+    /** Classic only: how to tell the server the connection is over. Set once the connection is CONNECTED. */
+    @Volatile private var classicAbort: ClassicAbort? = null
+    private class ClassicAbort(val url: String, val headers: Map<String, String>)
+
     /** The running reconnect loop, set only while the state is RECONNECTING. */
     @Volatile private var reconnectJob: Job? = null
     /**
@@ -179,8 +188,8 @@ internal class HubConnectionImpl(
     private suspend fun establish(scope: CoroutineScope) {
         val token = accessTokenProvider?.invoke()
         val headersWithAuth = connectionHeaders.toMutableMap()
-        if (!headersWithAuth.containsKey("User-Agent")) {
-            headersWithAuth["User-Agent"] = "Mozilla/5.0 (Android; EasyMarkets SignalR)"
+        if (headersWithAuth.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+            headersWithAuth["User-Agent"] = DEFAULT_USER_AGENT
         }
         if (token != null) {
             headersWithAuth["Authorization"] = "Bearer $token"
@@ -244,6 +253,12 @@ internal class HubConnectionImpl(
             lastReceivedNanos = now
             lastSentNanos = now
             _connectionState.value = HubConnectionState.CONNECTED
+            if (isClassic) {
+                classicAbort = ClassicAbort(
+                    getAbortUrl(baseUrl, negotiateResponse?.getEffectiveConnectionToken()),
+                    headersWithAuth,
+                )
+            }
             inFlight?.complete(Unit)
             inFlight = null
         }
@@ -516,6 +531,15 @@ internal class HubConnectionImpl(
                     completeInvocation(completionId, classicFrame.R, classicFrame.E)
                 }
 
+                val command = when {
+                    classicFrame.D == 1 -> ServerClose(error = null, allowReconnect = false)
+                    classicFrame.T == 1 -> ServerClose(error = null, allowReconnect = true)
+                    else -> null
+                }
+                if (command != null) {
+                    log(SignalRLogLevel.INFO) { "Classic server asked to ${if (command.allowReconnect) "reconnect" else "disconnect"}." }
+                }
+
                 classicFrame.M?.forEach { invocation ->
                     val method = invocation.M
                     val hub = invocation.H
@@ -530,6 +554,7 @@ internal class HubConnectionImpl(
                         dispatchCallbacks(hub, args)
                     }
                 }
+                if (command != null) return command
             } catch (_: Throwable) {
                 log(SignalRLogLevel.WARN) { "Unrecognized frame (${frameText.length} chars) ignored." }
                 log(SignalRLogLevel.VERBOSE) { "Unrecognized frame payload: $frameText" }
@@ -574,6 +599,7 @@ internal class HubConnectionImpl(
         val session: WebSocketSession?,
         val scope: CoroutineScope?,
         val reconnectJob: Job? = null,
+        val classicAbort: ClassicAbort? = null,
     )
 
     /**
@@ -595,10 +621,11 @@ internal class HubConnectionImpl(
             _connectionState.value = HubConnectionState.DISCONNECTED
             inFlight?.completeExceptionally(inFlightFailure ?: ConnectAbortedException())
             inFlight = null
-            Detached(session, clientScope, reconnectJob).also {
+            Detached(session, clientScope, reconnectJob, classicAbort).also {
                 session = null
                 clientScope = null
                 reconnectJob = null
+                classicAbort = null
             }
         }
         failPendingInvokes(if (lost) "Connection was lost" else "Connection was closed", lostCause)
@@ -621,7 +648,10 @@ internal class HubConnectionImpl(
         log(SignalRLogLevel.DEBUG) { "Closing WebSocket session and cancelling client coroutine scope..." }
         detached.reconnectJob?.cancel()
         // NonCancellable: the caller may itself be one of the coroutines being torn down.
-        withContext(NonCancellable) { detached.session?.closeQuietly() }
+        withContext(NonCancellable) {
+            detached.session?.closeQuietly()
+            detached.classicAbort?.let { sendClassicAbort(it) }
+        }
         detached.scope?.cancel()
     }
 
@@ -641,6 +671,8 @@ internal class HubConnectionImpl(
             if (clientScope !== scope || closed.get()) return
             _connectionState.value = HubConnectionState.RECONNECTING
             inFlight = CompletableDeferred()
+            // The old classic connection is unreachable or already gone; the new one gets its own.
+            classicAbort = null
             // Launched under the lock, so the loop's ownership check sees reconnectJob already set.
             reconnectJob = reconnectScope.launch { reconnectLoop(policy, cause) }
             Detached(session, clientScope).also {
@@ -729,6 +761,24 @@ internal class HubConnectionImpl(
         }
         log(SignalRLogLevel.WARN, reason) { "Giving up reconnecting after $attempts attempt(s); HubConnection is now DISCONNECTED." }
         notifyError(ReconnectFailedException(attempts, reason))
+    }
+
+    /** Best effort, and bounded so a dead network can't stall [disconnect] for long. */
+    private suspend fun sendClassicAbort(abort: ClassicAbort) {
+        log(SignalRLogLevel.DEBUG) { "Sending classic abort request..." }
+        log(SignalRLogLevel.VERBOSE) { "Classic abort URL: ${abort.url}" }
+        try {
+            val response = withTimeoutOrNull(CLASSIC_ABORT_TIMEOUT_MS.milliseconds) {
+                client.post(abort.url) { abort.headers.forEach { entry -> header(entry.key, entry.value) } }
+            }
+            if (response == null) {
+                log(SignalRLogLevel.DEBUG) { "Classic abort got no answer within ${CLASSIC_ABORT_TIMEOUT_MS}ms." }
+            } else {
+                log(SignalRLogLevel.DEBUG) { "Classic abort answered ${response.status}." }
+            }
+        } catch (t: Throwable) {
+            log(SignalRLogLevel.DEBUG) { "Classic abort failed: ${t::class.simpleName}" }
+        }
     }
 
     private suspend fun WebSocketSession.closeQuietly() {

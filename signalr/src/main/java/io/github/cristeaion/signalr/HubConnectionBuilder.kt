@@ -15,7 +15,7 @@ class HubConnectionBuilder private constructor(private val url: String) {
     private var keepAliveIntervalMs: Long = DEFAULT_KEEP_ALIVE_INTERVAL_MS
     private var serverTimeoutMs: Long = DEFAULT_SERVER_TIMEOUT_MS
     private var logger: SignalRLogger? = null
-    private var logLevel: SignalRLogLevel = SignalRLogLevel.DEBUG
+    private var logLevel: SignalRLogLevel = SignalRLogLevel.WARN
     private var retryPolicy: RetryPolicy? = null
     private var invocationTimeoutMs: Long = 0
 
@@ -49,7 +49,10 @@ class HubConnectionBuilder private constructor(private val url: String) {
         return this
     }
 
-    /** Applies to whichever logger is in use - it no longer replaces one set by [withLogger]. */
+    /**
+     * The lowest level that gets logged, by whichever logger is in use (it doesn't replace one
+     * set by [withLogger]). Defaults to WARN: problems only, nothing per connection step.
+     */
     fun withLogLevel(logLevel: SignalRLogLevel): HubConnectionBuilder {
         this.logLevel = logLevel
         return this
