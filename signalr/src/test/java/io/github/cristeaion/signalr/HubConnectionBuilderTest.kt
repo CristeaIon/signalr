@@ -46,9 +46,10 @@ class HubConnectionBuilderTest {
     @Test
     fun testHubConnectionStateValues() {
         val states = HubConnectionState.values()
-        assertEquals(3, states.size)
+        assertEquals(4, states.size)
         assertEquals(HubConnectionState.DISCONNECTED, HubConnectionState.valueOf("DISCONNECTED"))
         assertEquals(HubConnectionState.CONNECTING, HubConnectionState.valueOf("CONNECTING"))
         assertEquals(HubConnectionState.CONNECTED, HubConnectionState.valueOf("CONNECTED"))
+        assertEquals(HubConnectionState.RECONNECTING, HubConnectionState.valueOf("RECONNECTING"))
     }
 }

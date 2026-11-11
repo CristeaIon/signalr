@@ -200,6 +200,7 @@ class MainActivity : ComponentActivity() {
                     .withLogger(appLogger)
                     .withLogLevel(SignalRLogLevel.DEBUG)
                     .withHandshakeTimeout(15_000)
+                    .withAutomaticReconnect()
                     .build()
                 hubConnection = connection
 
@@ -218,6 +219,10 @@ class MainActivity : ComponentActivity() {
                 connection.on<String, String>("ReceiveMessage") { user, message ->
                     onLog("[Event] ReceiveMessage: $user -> $message", LogType.EVENT)
                     onChat(user, message)
+                }
+
+                connection.onReconnected(lifecycleScope) {
+                    onLog("Reconnected: the server sees a new connection.", LogType.SUCCESS)
                 }
 
                 lifecycleScope.launch {
@@ -782,6 +787,7 @@ fun ConnectionBadge(state: HubConnectionState) {
     val (color, text) = when (state) {
         HubConnectionState.CONNECTED -> Color(0xFF4CAF50) to "CONNECTED"
         HubConnectionState.CONNECTING -> Color(0xFFFF9800) to "CONNECTING"
+        HubConnectionState.RECONNECTING -> Color(0xFFFF9800) to "RECONNECTING"
         HubConnectionState.DISCONNECTED -> Color(0xFFF44336) to "DISCONNECTED"
     }
 

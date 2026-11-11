@@ -25,9 +25,20 @@ interface HubConnection : AutoCloseable {
      */
     val eventsFlow: SharedFlow<SignalREvent>
 
+    /**
+     * Emits each time automatic reconnect restores a dropped connection. The server sees a new
+     * connection, so re-join groups and re-subscribe here. Handlers registered with [on] are kept
+     * and need no re-registering. Never emits without [HubConnectionBuilder.withAutomaticReconnect].
+     */
+    val reconnectedFlow: SharedFlow<Unit>
+
+    /**
+     * Connects once. A failure is thrown and is not retried, even with automatic reconnect:
+     * that only restores a connection that was established and then dropped.
+     */
     suspend fun connect()
 
-    /** Closes the session. The connection can [connect] again afterwards. */
+    /** Closes the session and stops any automatic reconnect. The connection can [connect] again afterwards. */
     suspend fun disconnect()
 
     /**

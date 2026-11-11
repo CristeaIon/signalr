@@ -16,6 +16,7 @@ class HubConnectionBuilder private constructor(private val url: String) {
     private var serverTimeoutMs: Long = DEFAULT_SERVER_TIMEOUT_MS
     private var logger: SignalRLogger? = null
     private var logLevel: SignalRLogLevel = SignalRLogLevel.DEBUG
+    private var retryPolicy: RetryPolicy? = null
 
     companion object {
         /** Same defaults as the official ASP.NET Core clients. */
@@ -83,6 +84,31 @@ class HubConnectionBuilder private constructor(private val url: String) {
         return this
     }
 
+    /**
+     * Reconnects automatically when an established connection drops (socket error, server
+     * close, server timeout), using exponential backoff with jitter: about 1s, 2s, 4s, 8s, 16s,
+     * then every 30s, with no limit on attempts. While it retries the state is RECONNECTING.
+     * It stops on [HubConnection.disconnect] or [HubConnection.close], or when an ASP.NET Core
+     * server closes the connection without allowing reconnect. A failed first [HubConnection.connect]
+     * is not retried.
+     */
+    fun withAutomaticReconnect(): HubConnectionBuilder =
+        withAutomaticReconnect(ExponentialBackoffRetryPolicy())
+
+    /**
+     * Reconnects automatically, making one attempt after each of [delaysMs] in turn and then giving
+     * up: the state becomes DISCONNECTED and a [ReconnectFailedException] reaches
+     * [HubConnection.errorFlow]. `listOf(0, 2_000, 10_000, 30_000)` matches the official clients.
+     */
+    fun withAutomaticReconnect(delaysMs: List<Long>): HubConnectionBuilder =
+        withAutomaticReconnect(RetryPolicy.fixedDelays(delaysMs))
+
+    /** Reconnects automatically, as [policy] decides. See [ExponentialBackoffRetryPolicy]. */
+    fun withAutomaticReconnect(policy: RetryPolicy): HubConnectionBuilder {
+        this.retryPolicy = policy
+        return this
+    }
+
     fun shouldSkipNegotiate(skipNegotiate: Boolean): HubConnectionBuilder {
         this.skipNegotiate = skipNegotiate
         return this
@@ -107,7 +133,8 @@ class HubConnectionBuilder private constructor(private val url: String) {
             effectiveLogger,
             handshakeTimeoutMs,
             keepAliveIntervalMs,
-            serverTimeoutMs
+            serverTimeoutMs,
+            retryPolicy,
         )
     }
 }

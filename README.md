@@ -66,6 +66,33 @@ A `HubConnection` owns an HTTP client, so call `close()` once you no longer need
 connection.onError(lifecycleScope) { throwable -> Log.e("Hub", "SignalR error", throwable) }
 ```
 
+### Automatic reconnect
+
+Reconnect is off by default. Turn it on and a connection that drops after it was established is restored by itself:
+
+```kotlin
+HubConnectionBuilder.create(url)
+    .withAutomaticReconnect()                                   // backoff: ~1s, 2s, 4s, 8s, 16s, then every 30s, never gives up
+    // .withAutomaticReconnect(listOf(0, 2_000, 10_000, 30_000)) // fixed delays, then give up (like the official clients)
+    // .withAutomaticReconnect(ExponentialBackoffRetryPolicy(maxDelayMs = 60_000, maxElapsedMs = 5 * 60_000))
+    // .withAutomaticReconnect { ctx -> if (ctx.previousRetryCount < 5) 3_000L else null } // your own RetryPolicy
+    .build()
+```
+
+- **Triggers:** a socket error, the server closing the socket, a server timeout, or an ASP.NET Core close message with `allowReconnect: true`. A close message without it (for example after an auth failure) disconnects without retrying.
+- **Not retried:** a failed first `connect()`. It throws as before.
+- While retrying, the state is `RECONNECTING`, and `send()` / `invoke()` throw. `invoke()` calls still waiting when the connection drops are cancelled.
+- `disconnect()` and `close()` stop a reconnect that is in progress.
+- When a policy gives up, the state becomes `DISCONNECTED` and a `ReconnectFailedException` (with the attempt count and the last failure as its cause) is emitted on `errorFlow`.
+- Each attempt negotiates again and asks the `accessTokenProvider` for a fresh token. Handlers registered with `on(...)` stay registered.
+- The server sees a **new connection**, so groups and server-side subscriptions are gone. Restore them in `onReconnected`:
+
+```kotlin
+connection.onReconnected(scope) { connection.send("JoinGroup", "prices") }
+```
+
+The default policy never gives up, and the library doesn't know when your app is in the background. To avoid retrying (and draining the battery) while nobody is looking, tie the connection to the app's lifecycle, for example by calling `disconnect()` on `ProcessLifecycleOwner` `ON_STOP` and `connect()` on `ON_START`.
+
 ### Receive server events
 
 Method names are matched case-insensitively. The typed overloads decode up to three arguments with kotlinx.serialization. If the server leaves an argument out or sends `null`, a nullable type receives `null` and a non-nullable primitive receives its default (`""`, `0`, `false`).

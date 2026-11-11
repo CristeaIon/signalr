@@ -15,9 +15,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,6 +53,8 @@ internal class HubConnectionImpl(
     private val handshakeTimeoutMs: Long = 15_000L,
     private val keepAliveIntervalMs: Long = HubConnectionBuilder.DEFAULT_KEEP_ALIVE_INTERVAL_MS,
     private val serverTimeoutMs: Long = HubConnectionBuilder.DEFAULT_SERVER_TIMEOUT_MS,
+    /** Null: a dropped connection stays DISCONNECTED. Otherwise it reconnects as this policy says. */
+    private val retryPolicy: RetryPolicy? = null,
 ) : HubConnection {
 
     private val _connectionState = MutableStateFlow(HubConnectionState.DISCONNECTED)
@@ -62,13 +66,20 @@ internal class HubConnectionImpl(
     private val _eventsFlow = MutableSharedFlow<SignalREvent>(extraBufferCapacity = 128)
     override val eventsFlow: SharedFlow<SignalREvent> = _eventsFlow.asSharedFlow()
 
+    private val _reconnectedFlow = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    override val reconnectedFlow: SharedFlow<Unit> = _reconnectedFlow.asSharedFlow()
+
     private val isClassic = isClassicSignalRUrl(baseUrl)
     private val classicHubNames = extractClassicHubNames(baseUrl)
 
-    /** Guards the state / session / scope triple so teardown and connect never interleave. */
+    /** Guards state, session, scope and reconnect job so teardown and connect never interleave. */
     private val lock = Any()
     @Volatile private var session: WebSocketSession? = null
     @Volatile private var clientScope: CoroutineScope? = null
+    /** The running reconnect loop, set only while the state is RECONNECTING. */
+    @Volatile private var reconnectJob: Job? = null
+    /** Hosts reconnect loops: they must outlive the per-connection scope that just died. Cancelled by [close]. */
+    private val reconnectScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val closed = AtomicBoolean(false)
     private val invocationIdCounter = AtomicInteger(1)
 
@@ -95,7 +106,7 @@ internal class HubConnectionImpl(
                 return
             }
             _connectionState.value = HubConnectionState.CONNECTING
-            CoroutineScope(Dispatchers.IO + SupervisorJob()).also { clientScope = it }
+            newConnectionScope().also { clientScope = it }
         }
         log(SignalRLogLevel.INFO) { "Initiating connection to ${withoutQuery(baseUrl)} (skipNegotiate=$skipNegotiate)..." }
 
@@ -112,6 +123,12 @@ internal class HubConnectionImpl(
         }
     }
 
+    private fun newConnectionScope() = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * Negotiates, opens the WebSocket, handshakes and moves to CONNECTED. Used by [connect] and by
+     * each reconnect attempt; the caller owns the state before it and cleans up if it throws.
+     */
     private suspend fun establish(scope: CoroutineScope) {
         val token = accessTokenProvider?.invoke()
         val headersWithAuth = connectionHeaders.toMutableMap()
@@ -208,7 +225,10 @@ internal class HubConnectionImpl(
         log(SignalRLogLevel.DEBUG) { "ASP.NET Core SignalR handshake completed successfully." }
         // The server may batch its first messages into the handshake frame.
         if (frames.size > 1) {
-            handleIncomingPayload(frames.drop(1).joinToString("") { it + SignalRProtocol.RECORD_SEPARATOR })
+            val close = handleIncomingPayload(frames.drop(1).joinToString("") { it + SignalRProtocol.RECORD_SEPARATOR })
+            if (close != null) {
+                throw IllegalStateException("Server closed the connection during the handshake: ${close.error ?: "no error given"}")
+            }
         }
     }
 
@@ -226,21 +246,28 @@ internal class HubConnectionImpl(
     private fun startReader(scope: CoroutineScope, ws: WebSocketSession) {
         scope.launch {
             log(SignalRLogLevel.DEBUG) { "Started background WebSocket frame reader loop." }
+            var cause: Throwable? = null
+            var allowReconnect = true
             try {
                 for (frame in ws.incoming) {
                     lastReceivedNanos = System.nanoTime()
-                    if (frame is Frame.Text) {
-                        handleIncomingPayload(frame.readText())
+                    if (frame !is Frame.Text) continue
+                    val close = handleIncomingPayload(frame.readText()) ?: continue
+                    allowReconnect = close.allowReconnect
+                    if (close.error != null) {
+                        cause = RuntimeException("Server closed the connection: ${close.error}").also { notifyError(it) }
                     }
+                    break
                 }
             } catch (ce: CancellationException) {
                 log(SignalRLogLevel.INFO) { "WebSocket frame reader cancelled gracefully." }
             } catch (t: Throwable) {
                 log(SignalRLogLevel.ERROR, t) { "WebSocket frame reader error" }
                 notifyError(t)
+                cause = t
             } finally {
                 log(SignalRLogLevel.INFO) { "WebSocket frame reader loop terminated." }
-                detach(scope)?.let { release(it) }
+                onConnectionLost(scope, cause, allowReconnect)
             }
         }
     }
@@ -282,11 +309,11 @@ internal class HubConnectionImpl(
                         delay(remainingMs)
                         continue
                     }
+                    if (clientScope !== scope) return@launch
                     val error = ServerTimeoutException(timeoutMs)
                     log(SignalRLogLevel.WARN, error) { "Server went silent; closing the connection." }
-                    val detached = detach(scope) ?: return@launch
                     notifyError(error)
-                    release(detached)
+                    onConnectionLost(scope, error, allowReconnect = true)
                     return@launch
                 }
             }
@@ -376,7 +403,14 @@ internal class HubConnectionImpl(
         }
     }
 
-    private fun handleIncomingPayload(payload: String) {
+    /** A Core close message (type 7). */
+    private class ServerClose(val error: String?, val allowReconnect: Boolean)
+
+    /**
+     * Dispatches every frame in [payload]. Returns the server's close message if there is one;
+     * frames after it are ignored, and the caller ends the connection.
+     */
+    private fun handleIncomingPayload(payload: String): ServerClose? {
         log(SignalRLogLevel.VERBOSE) { "Handling incoming payload (${payload.length} chars): $payload" }
         val frames = SignalRProtocol.parseFrames(payload)
         for (frameText in frames) {
@@ -399,6 +433,14 @@ internal class HubConnectionImpl(
 
                         // Ping: receiving it already reset the server timeout; it needs no reply.
                         6 -> log(SignalRLogLevel.VERBOSE) { "Received keep-alive ping." }
+
+                        7 -> { // Close
+                            // Like the official clients: no reconnect unless the server allows it.
+                            val allowReconnect = msg.allowReconnect == true
+                            log(SignalRLogLevel.INFO) { "Server sent a close message (allowReconnect=$allowReconnect, error=${msg.error != null})." }
+                            log(SignalRLogLevel.VERBOSE) { "Close message error: ${msg.error}" }
+                            return ServerClose(msg.error, allowReconnect)
+                        }
                     }
                     continue
                 }
@@ -437,6 +479,7 @@ internal class HubConnectionImpl(
                 log(SignalRLogLevel.VERBOSE) { "Unrecognized frame payload: $frameText" }
             }
         }
+        return null
     }
 
     override suspend fun disconnect() {
@@ -448,6 +491,7 @@ internal class HubConnectionImpl(
         if (!closed.compareAndSet(false, true)) return
         log(SignalRLogLevel.INFO) { "Close requested: disconnecting and releasing the HTTP client." }
         val detached = detach()
+        reconnectScope.cancel()
         // close() must not block, so the graceful WebSocket close runs in the background; the
         // client is closed only after it, or the close frame would never be written.
         CoroutineScope(Dispatchers.IO).launch {
@@ -464,7 +508,11 @@ internal class HubConnectionImpl(
     private class ConnectAbortedException :
         IllegalStateException("Connection was disconnected or closed while connecting.")
 
-    private class Detached(val session: WebSocketSession?, val scope: CoroutineScope?)
+    private class Detached(
+        val session: WebSocketSession?,
+        val scope: CoroutineScope?,
+        val reconnectJob: Job? = null,
+    )
 
     /**
      * Synchronously moves to DISCONNECTED and hands back what must be released. With [owner]
@@ -476,23 +524,132 @@ internal class HubConnectionImpl(
             if (owner != null && clientScope !== owner) return null
             if (_connectionState.value == HubConnectionState.DISCONNECTED) return null
             _connectionState.value = HubConnectionState.DISCONNECTED
+            Detached(session, clientScope, reconnectJob).also {
+                session = null
+                clientScope = null
+                reconnectJob = null
+            }
+        }
+        cancelPendingInvokes()
+        log(SignalRLogLevel.INFO) { "HubConnection is now DISCONNECTED." }
+        return detached
+    }
+
+    private fun cancelPendingInvokes() {
+        pendingInvokes.values.forEach { it.cancel() }
+        pendingInvokes.clear()
+    }
+
+    /** Closes the WebSocket gracefully, then stops the connection's coroutines and any reconnect loop. */
+    private suspend fun release(detached: Detached) {
+        log(SignalRLogLevel.DEBUG) { "Closing WebSocket session and cancelling client coroutine scope..." }
+        detached.reconnectJob?.cancel()
+        // NonCancellable: the caller may itself be one of the coroutines being torn down.
+        withContext(NonCancellable) { detached.session?.closeQuietly() }
+        detached.scope?.cancel()
+    }
+
+    /**
+     * The connection owned by [scope] dropped without the caller asking for it: the socket failed
+     * or closed, the server timed out, or the server sent a close message. Reconnects when a
+     * [retryPolicy] is set and the server allows it; otherwise moves to DISCONNECTED. Does nothing
+     * if [scope] no longer owns the connection (it was already disconnected or replaced).
+     */
+    private suspend fun onConnectionLost(scope: CoroutineScope, cause: Throwable?, allowReconnect: Boolean) {
+        val policy = retryPolicy
+        if (policy == null || !allowReconnect) {
+            detach(scope)?.let { release(it) }
+            return
+        }
+        val detached = synchronized(lock) {
+            if (clientScope !== scope || closed.get()) return
+            _connectionState.value = HubConnectionState.RECONNECTING
+            // Launched under the lock, so the loop's ownership check sees reconnectJob already set.
+            reconnectJob = reconnectScope.launch { reconnectLoop(policy, cause) }
             Detached(session, clientScope).also {
                 session = null
                 clientScope = null
             }
         }
-        pendingInvokes.values.forEach { it.cancel() }
-        pendingInvokes.clear()
-        log(SignalRLogLevel.INFO) { "HubConnection is now DISCONNECTED." }
-        return detached
+        cancelPendingInvokes()
+        log(SignalRLogLevel.INFO, cause) { "Connection lost; HubConnection is now RECONNECTING." }
+        release(detached)
     }
 
-    /** Closes the WebSocket gracefully, then cancels the connection's coroutines. */
-    private suspend fun release(detached: Detached) {
-        log(SignalRLogLevel.DEBUG) { "Closing WebSocket session and cancelling client coroutine scope..." }
-        // NonCancellable: the caller may itself be one of the coroutines being torn down.
-        withContext(NonCancellable) { detached.session?.closeQuietly() }
-        detached.scope?.cancel()
+    /**
+     * Retries [establish] until it succeeds, [policy] gives up, or [disconnect] / [close] cancels
+     * this loop. Each attempt runs in a fresh scope that the loop releases if the attempt fails.
+     */
+    private suspend fun reconnectLoop(policy: RetryPolicy, initialCause: Throwable?) {
+        val self = currentCoroutineContext()[Job]
+        val lostAtNanos = System.nanoTime()
+        var reason = initialCause
+        var attempts = 0
+        while (true) {
+            val delayMs = try {
+                policy.nextRetryDelayMs(RetryContext(attempts, elapsedMs(lostAtNanos), reason))
+            } catch (t: Throwable) {
+                log(SignalRLogLevel.ERROR, t) { "RetryPolicy threw; stopping reconnect." }
+                null
+            }
+            if (delayMs == null) {
+                giveUpReconnecting(self, attempts, reason)
+                return
+            }
+            log(SignalRLogLevel.INFO) { "Reconnect attempt ${attempts + 1} in ${delayMs}ms." }
+            delay(delayMs.coerceAtLeast(0))
+
+            val scope = synchronized(lock) {
+                if (reconnectJob !== self || closed.get()) return
+                newConnectionScope().also { clientScope = it }
+            }
+            attempts++
+            try {
+                establish(scope)
+            } catch (ce: CancellationException) {
+                releaseAttempt(scope)
+                // Ktor can surface a transport failure as a CancellationException; only a real
+                // cancellation of this loop (disconnect / close) ends it.
+                if (!currentCoroutineContext().isActive) throw ce
+                log(SignalRLogLevel.WARN, ce) { "Reconnect attempt $attempts was cancelled by the transport." }
+                reason = ce
+                continue
+            } catch (abort: ConnectAbortedException) {
+                releaseAttempt(scope)
+                return
+            } catch (t: Throwable) {
+                log(SignalRLogLevel.WARN, t) { "Reconnect attempt $attempts failed." }
+                reason = t
+                releaseAttempt(scope)
+                continue
+            }
+            synchronized(lock) { if (reconnectJob === self) reconnectJob = null }
+            log(SignalRLogLevel.INFO) { "Reconnected after $attempts attempt(s)." }
+            _reconnectedFlow.tryEmit(Unit)
+            return
+        }
+    }
+
+    /** Releases what a failed reconnect attempt opened, unless a disconnect already took it over. */
+    private suspend fun releaseAttempt(scope: CoroutineScope) {
+        val detached = synchronized(lock) {
+            if (clientScope !== scope) return
+            Detached(session, clientScope).also {
+                session = null
+                clientScope = null
+            }
+        }
+        release(detached)
+    }
+
+    private fun giveUpReconnecting(self: Job?, attempts: Int, reason: Throwable?) {
+        synchronized(lock) {
+            if (reconnectJob !== self) return
+            reconnectJob = null
+            _connectionState.value = HubConnectionState.DISCONNECTED
+        }
+        log(SignalRLogLevel.WARN, reason) { "Giving up reconnecting after $attempts attempt(s); HubConnection is now DISCONNECTED." }
+        notifyError(ReconnectFailedException(attempts, reason))
     }
 
     private suspend fun WebSocketSession.closeQuietly() {

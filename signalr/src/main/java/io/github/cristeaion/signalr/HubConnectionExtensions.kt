@@ -41,6 +41,10 @@ suspend inline fun <reified T> HubConnection.invoke(method: String, vararg args:
 fun HubConnection.onError(scope: CoroutineScope, action: (Throwable) -> Unit): Job =
     scope.launch { errorFlow.collect(action) }
 
+/** Runs [action] each time automatic reconnect restores the connection, for as long as [scope] is active. */
+fun HubConnection.onReconnected(scope: CoroutineScope, action: suspend () -> Unit): Job =
+    scope.launch { reconnectedFlow.collect { action() } }
+
 /** Type-safe Flow extension functions for HubConnection events. */
 @JvmName("onFlowRaw")
 fun HubConnection.onFlow(method: String): Flow<List<JsonElement>> =
