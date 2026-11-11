@@ -18,6 +18,9 @@ internal object SignalRProtocol {
         return json.encodeToString(HandshakeRequest.serializer(), HandshakeRequest()) + RECORD_SEPARATOR
     }
 
+    /** ASP.NET Core keep-alive: a type-6 message. Neither side answers it; receiving it is enough. */
+    val PING_MESSAGE: String = "{\"type\":6}$RECORD_SEPARATOR"
+
     fun parseFrames(payload: String): List<String> {
         if (payload.isEmpty()) return emptyList()
         return payload.split(RECORD_SEPARATOR).filter { it.isNotEmpty() }

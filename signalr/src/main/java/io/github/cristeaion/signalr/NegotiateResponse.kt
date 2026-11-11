@@ -21,6 +21,9 @@ internal data class NegotiateResponse(
     val protocolVersion: String? = null,
     @SerialName("TryWebSockets")
     val tryWebSockets: Boolean? = null,
+    /** Classic only: seconds without any frame after which the connection is dead; null = keep-alive off. */
+    @SerialName("KeepAliveTimeout")
+    val keepAliveTimeout: Double? = null,
     val accessToken: String? = null
 ) {
     fun getEffectiveConnectionToken(): String? {

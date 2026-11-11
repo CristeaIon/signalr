@@ -4,8 +4,13 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.JsonElement
 
-/** A connection to a SignalR hub. Create one with [HubConnectionBuilder]. */
-interface HubConnection {
+/**
+ * A connection to a SignalR hub. Create one with [HubConnectionBuilder].
+ *
+ * The connection owns an HTTP client. Call [close] once you are done with it for good: it
+ * disconnects and releases the client. After [close], [connect] throws.
+ */
+interface HubConnection : AutoCloseable {
     val connectionState: StateFlow<HubConnectionState>
 
     /**
@@ -22,7 +27,14 @@ interface HubConnection {
 
     suspend fun connect()
 
+    /** Closes the session. The connection can [connect] again afterwards. */
     suspend fun disconnect()
+
+    /**
+     * Disconnects and releases the underlying HTTP client. It does not block: the WebSocket is
+     * closed gracefully in the background. Calling it again does nothing.
+     */
+    override fun close()
 
     /** Fire-and-forget hub call. */
     suspend fun send(method: String, vararg args: Any)

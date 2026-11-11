@@ -158,6 +158,9 @@ class MainActivity : ComponentActivity() {
                 onLog("Disconnected from SignalR hub.", LogType.INFO)
             } catch (t: Throwable) {
                 onLog("Disconnect error: ${t.localizedMessage ?: t.message}", LogType.ERROR)
+            } finally {
+                // Each connect builds a new HubConnection, so release the old one's HTTP client.
+                oldConn.close()
             }
         }
     }
@@ -273,13 +276,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        lifecycleScope.launch {
-            try {
-                hubConnection?.disconnect()
-            } catch (t: Throwable) {
-                Log.e("MainActivity", "Error while disconnecting", t)
-            }
-        }
+        // lifecycleScope is already cancelled here; close() does not suspend and finishes in the background.
+        hubConnection?.close()
+        hubConnection = null
     }
 }
 

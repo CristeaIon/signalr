@@ -71,6 +71,8 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)
     testImplementation(libs.junit)
+    testImplementation(libs.ktor.server.cio)
+    testImplementation(libs.ktor.server.websockets)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
 }

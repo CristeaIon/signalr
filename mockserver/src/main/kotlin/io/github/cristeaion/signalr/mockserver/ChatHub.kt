@@ -31,11 +31,14 @@ class FaultSwitches {
     val rejectNextNegotiate = AtomicBoolean(false)
     val failNextInvoke = AtomicBoolean(false)
     @Volatile var initFrameDelayMs: Long = 0
+    /** While set, sockets stay open but the server stops sending keep-alives (a half-dead link). */
+    val silent = AtomicBoolean(false)
 
     fun reset() {
         rejectNextNegotiate.set(false)
         failNextInvoke.set(false)
         initFrameDelayMs = 0
+        silent.set(false)
     }
 }
 

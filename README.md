@@ -25,8 +25,14 @@ val connection = HubConnectionBuilder.create("https://example.com/chathub")
     .withLogger(AndroidSignalRLogger())                          // default: ConsoleSignalRLogger
     .withLogLevel(SignalRLogLevel.INFO)
     .withHandshakeTimeout(15_000)
+    .withKeepAliveInterval(15_000)                               // ping when idle (Core servers); 0 = off
+    .withServerTimeout(30_000)                                   // drop after this long without a message; 0 = off
     .build()
 ```
+
+**Keep-alive.** On ASP.NET Core servers the client sends a ping whenever it hasn't sent anything for the keep-alive interval. If nothing arrives from the server within the server timeout, the client closes the connection, moves to `DISCONNECTED` and emits a `ServerTimeoutException` on `errorFlow`. Keep the server timeout at least twice the server's `KeepAliveInterval`. Classic servers send their own `{}` keep-alives and announce `KeepAliveTimeout` during negotiate. The client uses that value as its timeout and ignores `withServerTimeout`.
+
+**Logging.** Messages are built lazily, so a level you've turned off costs nothing. A custom `SignalRLogger` that filters by level should also override `isLoggable(level)`. Your own code can use the same lazy form: `logger.log(SignalRLogLevel.DEBUG, "Tag") { "expensive $value" }`.
 
 `connect()` calls `/negotiate` first. If the server accepts WebSockets directly and doesn't expose `/negotiate`, call `shouldSkipNegotiate(true)` on the builder.
 
@@ -46,8 +52,13 @@ lifecycleScope.launch {
 }
 
 // later
-connection.disconnect()
+connection.disconnect()   // can connect() again afterwards
+
+// done with it for good, e.g. in onDestroy / onCleared
+connection.close()        // disconnects and releases the HTTP client; does not suspend
 ```
+
+A `HubConnection` owns an HTTP client, so call `close()` once you no longer need it. It is `AutoCloseable`. If `connect()` fails at any step (negotiate, handshake, handshake timeout, classic `/start`), the WebSocket that was opened is closed before the exception reaches you.
 
 `connect()`, `disconnect()`, `send()` and `invoke()` are `suspend` functions and throw their failures to the caller. Errors that happen with no caller waiting arrive on `errorFlow`: a dropped socket, an error frame from the server, or an exception thrown inside a handler.
 

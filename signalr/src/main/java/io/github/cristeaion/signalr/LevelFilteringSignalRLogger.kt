@@ -5,8 +5,11 @@ internal class LevelFilteringSignalRLogger(
     private val delegate: SignalRLogger,
     private val minLevel: SignalRLogLevel = SignalRLogLevel.DEBUG
 ) : SignalRLogger {
+    override fun isLoggable(level: SignalRLogLevel): Boolean =
+        level.isAtLeast(minLevel) && delegate.isLoggable(level)
+
     override fun log(level: SignalRLogLevel, tag: String, message: String, throwable: Throwable?) {
-        if (level < minLevel || level == SignalRLogLevel.NONE) return
+        if (!isLoggable(level)) return
         delegate.log(level, tag, message, throwable)
     }
 }

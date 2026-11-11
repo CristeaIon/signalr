@@ -170,3 +170,12 @@ internal fun buildWebSocketUrl(
         wsMainUrl
     }
 }
+
+/**
+ * [url] for logs below VERBOSE: the query is dropped because it can carry credentials
+ * (`sessionId`, `access_token`, `connectionToken`). A trailing `?…` shows that one was there.
+ */
+internal fun withoutQuery(url: String): String {
+    val end = url.indexOfAny(charArrayOf('?', '#'))
+    return if (end < 0) url else url.substring(0, end) + "?…"
+}

@@ -35,7 +35,7 @@ fun main(args: Array<String>) {
         |Demo users:  ${DEMO_USERS.entries.joinToString { "${it.key} / ${it.value}" }}
         |
         |Android emulator or USB device: run `adb reverse tcp:$port tcp:$port` once per device.
-        |Failure switches: curl -X POST $base/mock/control/{reject-next-negotiate|fail-next-invoke|drop-all|init-delay?ms=N|reset}
+        |Failure switches: curl -X POST $base/mock/control/{reject-next-negotiate|fail-next-invoke|drop-all|init-delay?ms=N|silence|reset}
         |Press Ctrl+C to stop.
         """.trimMargin()
     )
