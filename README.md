@@ -32,7 +32,7 @@ val connection = HubConnectionBuilder.create("https://example.com/chathub")
 
 **Keep-alive.** On ASP.NET Core servers the client sends a ping whenever it hasn't sent anything for the keep-alive interval. If nothing arrives from the server within the server timeout, the client closes the connection, moves to `DISCONNECTED` and emits a `ServerTimeoutException` on `errorFlow`. Keep the server timeout at least twice the server's `KeepAliveInterval`. Classic servers send their own `{}` keep-alives and announce `KeepAliveTimeout` during negotiate. The client uses that value as its timeout and ignores `withServerTimeout`.
 
-**Logging.** Messages are built lazily, so a level you've turned off costs nothing. A custom `SignalRLogger` that filters by level should also override `isLoggable(level)`. Your own code can use the same lazy form: `logger.log(SignalRLogLevel.DEBUG, "Tag") { "expensive $value" }`.
+**Logging.** Messages are built lazily, so a level you've turned off costs nothing. Tokens, session ids, URL query strings, hub-call arguments and server payloads are logged only at `VERBOSE`; `DEBUG` and above show method names and ids, never content. A custom `SignalRLogger` that filters by level should also override `isLoggable(level)`. Your own code can use the same lazy form: `logger.log(SignalRLogLevel.DEBUG, "Tag") { "expensive $value" }`.
 
 `connect()` calls `/negotiate` first. If the server accepts WebSockets directly and doesn't expose `/negotiate`, call `shouldSkipNegotiate(true)` on the builder.
 

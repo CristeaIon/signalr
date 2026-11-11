@@ -82,13 +82,16 @@ class HubConnectionLifecycleTest {
         keepAliveMs: Long = 0,
         serverTimeoutMs: Long = 0,
         handshakeTimeoutMs: Long = 2_000,
+        baseUrl: String = url,
+        accessToken: String? = null,
+        logger: SignalRLogger = NoOpSignalRLogger,
     ) = HubConnectionImpl(
         client = client,
-        baseUrl = url,
+        baseUrl = baseUrl,
         connectionHeaders = emptyMap(),
-        accessTokenProvider = null,
+        accessTokenProvider = accessToken?.let { token -> { token } },
         skipNegotiate = true,
-        logger = NoOpSignalRLogger,
+        logger = logger,
         handshakeTimeoutMs = handshakeTimeoutMs,
         keepAliveIntervalMs = keepAliveMs,
         serverTimeoutMs = serverTimeoutMs,
@@ -208,6 +211,27 @@ class HubConnectionLifecycleTest {
         assertFalse(client.coroutineContext.job.isActive)
         assertThrows(IllegalStateException::class.java) { runBlocking { connection.connect() } }
         connection.close() // a second close is harmless
+    }
+
+    @Test
+    fun secretsAndPayloadsAreLoggedOnlyAtVerbose() = runBlocking {
+        val logger = RecordingSignalRLogger()
+        val connection = connection(
+            baseUrl = "$url?tenant=secret-query",
+            accessToken = "secret-token",
+            logger = logger,
+        )
+        connection.connect()
+        connection.send("Echo", "secret-arg")
+        connection.send("""{"H":"chathub","M":"Echo","A":["secret-envelope-arg"]}""")
+        connection.disconnect()
+
+        val secrets = listOf("secret-query", "secret-token", "secret-arg", "secret-envelope-arg")
+        logger.assertNoneBelowVerbose(secrets)
+        // The capture works: the same secrets do reach VERBOSE.
+        val verbose = logger.text(SignalRLogLevel.VERBOSE)
+        secrets.forEach { assertTrue("'$it' missing from VERBOSE output", verbose.contains(it)) }
+        assertTrue(logger.text(SignalRLogLevel.DEBUG).contains("Sending 'chathub.Echo'."))
     }
 
     @Test

@@ -42,7 +42,7 @@ val DEMO_USERS = linkedMapOf(
  *
  * Login:   GET  /api/login?appid=&timestamp=&rq=[{"action":"Login","args":{"userName":..,"password":..}}]
  * SignalR: /signalr/negotiate, /signalr/connect (WebSocket), /signalr/start, /signalr/abort, /signalr/ping
- * Faults:  POST /mock/control/{reject-next-negotiate|fail-next-invoke|drop-all|init-delay?ms=N|silence|reset}
+ * Faults:  POST /mock/control/{reject-next-negotiate|fail-next-invoke|reject-next-start|drop-all|init-delay?ms=N|silence|reset}
  *
  * Like a real SignalR 2.x server, it sends a `{}` keep-alive every [keepAliveIntervalMs] and
  * announces twice that as `KeepAliveTimeout` during negotiate.
@@ -87,6 +87,10 @@ internal fun Application.module(hub: ChatHub, keepAliveIntervalMs: Long) {
                     respondJson("""{"Error":"Unknown connection token"}""", HttpStatusCode.BadRequest)
                     return@get
                 }
+                if (hub.faults.rejectNextStart.compareAndSet(true, false)) {
+                    respondJson("""{"Error":"Mock start failure"}""", HttpStatusCode.InternalServerError)
+                    return@get
+                }
                 hub.start(connection)
                 respondJson("""{"Response":"started"}""")
             }
@@ -127,6 +131,7 @@ internal fun Application.module(hub: ChatHub, keepAliveIntervalMs: Long) {
             when (call.parameters["action"]) {
                 "reject-next-negotiate" -> faults.rejectNextNegotiate.set(true)
                 "fail-next-invoke" -> faults.failNextInvoke.set(true)
+                "reject-next-start" -> faults.rejectNextStart.set(true)
                 "drop-all" -> hub.dropAll()
                 "silence" -> faults.silent.set(true)
                 "init-delay" -> faults.initFrameDelayMs = call.request.queryParameters["ms"]?.toLongOrNull() ?: 0
