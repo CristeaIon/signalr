@@ -7,6 +7,8 @@ release may contain breaking changes; they are always listed under **Breaking**.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-11
+
 ### Breaking
 
 - `HubConnectionState` has a new value, `RECONNECTING`. An exhaustive `when` over the state
@@ -139,6 +141,7 @@ release may contain breaking changes; they are always listed under **Breaking**.
 - Example app and an offline mock server with a demo login and a chat hub.
 - Released under the MIT license.
 
-[Unreleased]: https://github.com/CristeaIon/signalr/compare/0.0.2...HEAD
+[Unreleased]: https://github.com/CristeaIon/signalr/compare/0.1.0...HEAD
+[0.1.0]: https://github.com/CristeaIon/signalr/compare/0.0.2...0.1.0
 [0.0.2]: https://github.com/CristeaIon/signalr/compare/0.0.1...0.0.2
 [0.0.1]: https://github.com/CristeaIon/signalr/releases/tag/0.0.1
