@@ -30,6 +30,7 @@ data class ChatMessage(val user: String, val message: String, val timestamp: Lon
 class FaultSwitches {
     val rejectNextNegotiate = AtomicBoolean(false)
     val failNextInvoke = AtomicBoolean(false)
+    val rejectNextStart = AtomicBoolean(false)
     @Volatile var initFrameDelayMs: Long = 0
     /** While set, sockets stay open but the server stops sending keep-alives (a half-dead link). */
     val silent = AtomicBoolean(false)
@@ -37,6 +38,7 @@ class FaultSwitches {
     fun reset() {
         rejectNextNegotiate.set(false)
         failNextInvoke.set(false)
+        rejectNextStart.set(false)
         initFrameDelayMs = 0
         silent.set(false)
     }
@@ -82,6 +84,9 @@ class ChatHub(private val users: Map<String, String>) {
         connections.values.filter { it.started }.map { it.user }.distinct().sorted()
 
     fun history(): List<ChatMessage> = history.toList()
+
+    /** WebSockets the server still holds open. */
+    fun openSocketCount(): Int = connections.values.count { it.socket != null }
 
     internal suspend fun start(connection: Connection) {
         connection.started = true

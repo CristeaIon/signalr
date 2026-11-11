@@ -31,6 +31,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -128,7 +130,8 @@ internal class HubConnectionImpl(
                 throw RuntimeException("Negotiate error: ${negotiateResponse.error}")
             }
             log(SignalRLogLevel.INFO) { "Negotiation successful." }
-            // Secrets (connection token, access_token in the URL) are logged at VERBOSE only.
+            // Secrets and payloads (tokens, URLs with queries, hub arguments, server data) are
+            // logged at VERBOSE only.
             log(SignalRLogLevel.VERBOSE) { "Negotiated connection token: ${negotiateResponse.getEffectiveConnectionToken()}" }
         } else {
             log(SignalRLogLevel.INFO) { "Skipping negotiation phase as requested." }
@@ -158,7 +161,8 @@ internal class HubConnectionImpl(
             }
             if (initFrame != null) {
                 val frameText = initFrame.readText()
-                log(SignalRLogLevel.DEBUG) { "Received classic init frame: $frameText" }
+                log(SignalRLogLevel.DEBUG) { "Received classic init frame." }
+                log(SignalRLogLevel.VERBOSE) { "Classic init frame: $frameText" }
                 handleIncomingPayload(frameText)
             } else {
                 log(SignalRLogLevel.WARN) { "No classic init frame arrived within ${handshakeTimeoutMs}ms; continuing to /start anyway." }
@@ -192,7 +196,8 @@ internal class HubConnectionImpl(
             throw IllegalStateException("Handshake failed: expected a text frame, got ${firstFrame.frameType}.")
         }
         val frameText = firstFrame.readText()
-        log(SignalRLogLevel.DEBUG) { "Received initial handshake response frame: $frameText" }
+        log(SignalRLogLevel.DEBUG) { "Received handshake response frame." }
+        log(SignalRLogLevel.VERBOSE) { "Handshake response frame: $frameText" }
         val frames = SignalRProtocol.parseFrames(frameText)
         val handshakeResponse = frames.firstOrNull()
             ?.let { SignalRProtocol.json.decodeFromString<HandshakeResponse>(it) }
@@ -310,7 +315,8 @@ internal class HubConnectionImpl(
         if (response.status.value !in 200..299) {
             throw RuntimeException("Classic start failed with status ${response.status}: $body")
         }
-        log(SignalRLogLevel.INFO) { "Classic start acknowledged: $body" }
+        log(SignalRLogLevel.INFO) { "Classic start acknowledged." }
+        log(SignalRLogLevel.VERBOSE) { "Classic start response: $body" }
     }
 
     private suspend fun negotiate(baseUrl: String, headers: Map<String, String>): NegotiateResponse {
@@ -364,7 +370,8 @@ internal class HubConnectionImpl(
             if (deferred != null) {
                 deferred.complete(value)
             } else {
-                log(SignalRLogLevel.INFO) { "Result for '$id' (nothing awaiting it): $value" }
+                log(SignalRLogLevel.INFO) { "Result for '$id' arrived with nothing awaiting it." }
+                log(SignalRLogLevel.VERBOSE) { "Unawaited result for '$id': $value" }
             }
         }
     }
@@ -426,7 +433,8 @@ internal class HubConnectionImpl(
                     }
                 }
             } catch (_: Throwable) {
-                log(SignalRLogLevel.WARN) { "Unrecognized frame payload: $frameText" }
+                log(SignalRLogLevel.WARN) { "Unrecognized frame (${frameText.length} chars) ignored." }
+                log(SignalRLogLevel.VERBOSE) { "Unrecognized frame payload: $frameText" }
             }
         }
     }
@@ -529,7 +537,8 @@ internal class HubConnectionImpl(
     override suspend fun send(method: String, vararg args: Any) {
         val activeSession = requireConnected(method)
         val frameText = formatOutgoingMessage(method, args, null)
-        log(SignalRLogLevel.DEBUG) { "Sending frame: $frameText" }
+        log(SignalRLogLevel.DEBUG) { "Sending '${describeMethod(method)}'." }
+        log(SignalRLogLevel.VERBOSE) { "Outgoing frame: $frameText" }
         sendText(activeSession, frameText)
     }
 
@@ -541,21 +550,33 @@ internal class HubConnectionImpl(
 
         return try {
             val frameText = formatOutgoingMessage(method, args, id)
-            log(SignalRLogLevel.DEBUG) { "Sending invocation frame (id=$id): $frameText" }
+            log(SignalRLogLevel.DEBUG) { "Invoking '${describeMethod(method)}' (id=$id)." }
+            log(SignalRLogLevel.VERBOSE) { "Outgoing invocation frame (id=$id): $frameText" }
             sendText(activeSession, frameText)
             deferred.await()
         } catch (t: Throwable) {
-            log(SignalRLogLevel.ERROR, t) { "Invocation '$method' (id=$id) failed" }
+            log(SignalRLogLevel.ERROR, t) { "Invocation '${describeMethod(method)}' (id=$id) failed" }
             throw t
         } finally {
             pendingInvokes.remove(id)
         }
     }
 
+    /**
+     * The method name for logs and error messages. A caller may pass a whole classic envelope
+     * as [method]; only its `hub.method` is shown, never its arguments.
+     */
+    private fun describeMethod(method: String): String {
+        val envelope = SignalRProtocol.asClassicEnvelope(method) ?: return method
+        val hub = (envelope["H"] as? JsonPrimitive)?.contentOrNull
+        val name = (envelope["M"] as? JsonPrimitive)?.contentOrNull
+        return listOfNotNull(hub, name).joinToString(".").ifEmpty { "<classic envelope>" }
+    }
+
     private fun requireConnected(method: String): WebSocketSession {
         val activeSession = session
         if (_connectionState.value != HubConnectionState.CONNECTED || activeSession == null) {
-            throw IllegalStateException("Cannot call '$method': connection is ${_connectionState.value}.")
+            throw IllegalStateException("Cannot call '${describeMethod(method)}': connection is ${_connectionState.value}.")
         }
         return activeSession
     }
