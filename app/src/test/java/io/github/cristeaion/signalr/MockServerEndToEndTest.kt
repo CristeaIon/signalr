@@ -104,8 +104,9 @@ class MockServerEndToEndTest {
         try {
             connection.connect()
             fail("Expected negotiate to be rejected")
-        } catch (e: RuntimeException) {
-            assertTrue(e.message!!.contains("401"))
+        } catch (e: NegotiateException) {
+            assertEquals(401, e.statusCode)
+            assertTrue(e.isAuthFailure)
         }
         assertEquals(HubConnectionState.DISCONNECTED, connection.connectionState.value)
         assertTrue(errors.next().message!!.contains("401"))
@@ -129,8 +130,8 @@ class MockServerEndToEndTest {
         try {
             connection.invoke("GetHistory")
             fail("Expected the invocation to fail")
-        } catch (e: RuntimeException) {
-            assertTrue(e.message!!.contains("Mock failure"))
+        } catch (e: HubException) {
+            assertTrue(e.serverError, e.serverError.contains("Mock failure"))
         }
         connection.disconnect()
     }

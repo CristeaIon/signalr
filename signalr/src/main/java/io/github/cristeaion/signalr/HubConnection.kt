@@ -10,27 +10,27 @@ import kotlinx.serialization.json.JsonElement
  * The connection owns an HTTP client. Call [close] once you are done with it for good: it
  * disconnects and releases the client. After [close], [connect] throws.
  */
-interface HubConnection : AutoCloseable {
-    val connectionState: StateFlow<HubConnectionState>
+public interface HubConnection : AutoCloseable {
+    public val connectionState: StateFlow<HubConnectionState>
 
     /**
      * Errors that have no caller to be thrown at: transport failures, frames the server pushed as
      * errors, and exceptions escaping a handler registered with [on]. Failures of [connect],
      * [disconnect], [send] and [invoke] are thrown to their caller instead.
      */
-    val errorFlow: SharedFlow<Throwable>
+    public val errorFlow: SharedFlow<Throwable>
 
     /**
      * SharedFlow emitting all incoming server-to-client events.
      */
-    val eventsFlow: SharedFlow<SignalREvent>
+    public val eventsFlow: SharedFlow<SignalREvent>
 
     /**
      * Emits each time automatic reconnect restores a dropped connection. The server sees a new
      * connection, so re-join groups and re-subscribe here. Handlers registered with [on] are kept
      * and need no re-registering. Never emits without [HubConnectionBuilder.withAutomaticReconnect].
      */
-    val reconnectedFlow: SharedFlow<Unit>
+    public val reconnectedFlow: SharedFlow<Unit>
 
     /**
      * Connects and returns once the state is CONNECTED. A failure is thrown and is not retried,
@@ -42,10 +42,10 @@ interface HubConnection : AutoCloseable {
      * or an `IllegalStateException` when [disconnect] or [close] interrupted it). Cancelling a
      * waiting call doesn't stop the attempt.
      */
-    suspend fun connect()
+    public suspend fun connect()
 
     /** Closes the session and stops any automatic reconnect. The connection can [connect] again afterwards. */
-    suspend fun disconnect()
+    public suspend fun disconnect()
 
     /**
      * Disconnects and releases the underlying HTTP client. It does not block: the WebSocket is
@@ -53,8 +53,11 @@ interface HubConnection : AutoCloseable {
      */
     override fun close()
 
-    /** Fire-and-forget hub call. */
-    suspend fun send(method: String, vararg args: Any)
+    /**
+     * Fire-and-forget hub call. Arguments may be `null`, primitives, `Map`s, collections, arrays,
+     * `JsonElement`s or `@Serializable` objects; anything else throws [IllegalArgumentException].
+     */
+    public suspend fun send(method: String, vararg args: Any?)
 
     /**
      * Hub call that waits for the server's result. Use the reified overload for a typed result.
@@ -64,7 +67,7 @@ interface HubConnection : AutoCloseable {
      * connection lasts. Throws [InvocationTimeoutException] when time runs out, and
      * [ConnectionLostException] when the connection drops or is disconnected first.
      */
-    suspend fun invoke(method: String, vararg args: Any, timeoutMs: Long? = null): JsonElement
+    public suspend fun invoke(method: String, vararg args: Any?, timeoutMs: Long? = null): JsonElement
 
     /**
      * Registers a handler for server-to-client calls to [method], matched case-insensitively.
@@ -76,5 +79,5 @@ interface HubConnection : AutoCloseable {
      * handlers after it. Hand long work to your own coroutine. Calls queued while
      * [Subscription.cancel] runs are skipped. An exception thrown by a handler goes to [errorFlow].
      */
-    fun on(method: String, handler: (List<JsonElement>) -> Unit): Subscription
+    public fun on(method: String, handler: (List<JsonElement>) -> Unit): Subscription
 }

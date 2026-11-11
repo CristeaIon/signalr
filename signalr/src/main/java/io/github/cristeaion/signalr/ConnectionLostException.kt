@@ -7,4 +7,4 @@ import java.io.IOException
  * arrives: it dropped (the [cause] says why, if known), or [HubConnection.disconnect] /
  * [HubConnection.close] was called. The server may or may not have run the method.
  */
-class ConnectionLostException(message: String, cause: Throwable? = null) : IOException(message, cause)
+public class ConnectionLostException(message: String, cause: Throwable? = null) : IOException(message, cause)

@@ -13,6 +13,7 @@ import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.filterIsInstance
@@ -94,7 +95,7 @@ class HubConnectionReconnectTest {
         val received = CopyOnWriteArrayList<String>()
         connection.on<String>("Notify") { received += it }
         connection.connect()
-        val reconnected = async { connection.reconnectedFlow.first() }
+        val reconnected = async(start = CoroutineStart.UNDISPATCHED) { connection.reconnectedFlow.first() }
 
         dropFromServer()
         connection.awaitState(HubConnectionState.RECONNECTING)
@@ -133,7 +134,7 @@ class HubConnectionReconnectTest {
     fun givesUpWhenThePolicyStopsAndReportsIt() = runBlocking {
         val connection = connection(RetryPolicy.fixedDelays(listOf(10, 10)))
         connection.connect()
-        val failure = async { connection.errorFlow.filterIsInstance<ReconnectFailedException>().first() }
+        val failure = async(start = CoroutineStart.UNDISPATCHED) { connection.errorFlow.filterIsInstance<ReconnectFailedException>().first() }
 
         handshakesToReject.set(Int.MAX_VALUE)
         dropFromServer()
@@ -183,7 +184,7 @@ class HubConnectionReconnectTest {
     fun serverCloseWithoutAllowReconnectDisconnects() = runBlocking {
         val connection = connection(RetryPolicy { 0L })
         connection.connect()
-        val error = async { connection.errorFlow.first() }
+        val error = async(start = CoroutineStart.UNDISPATCHED) { connection.errorFlow.first() }
 
         current!!.send(Frame.Text("{\"type\":7,\"error\":\"Unauthorized\"}$rs"))
         connection.awaitState(HubConnectionState.DISCONNECTED)
@@ -209,7 +210,7 @@ class HubConnectionReconnectTest {
     @Test
     fun serverTimeoutTriggersReconnect() = runBlocking {
         val connection = connection(RetryPolicy.fixedDelays(listOf(0)), serverTimeoutMs = 300)
-        val timeout = async { connection.errorFlow.filterIsInstance<ServerTimeoutException>().first() }
+        val timeout = async(start = CoroutineStart.UNDISPATCHED) { connection.errorFlow.filterIsInstance<ServerTimeoutException>().first() }
         connection.connect()
 
         withTimeout(3_000) { timeout.await() }

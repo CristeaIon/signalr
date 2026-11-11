@@ -101,7 +101,7 @@ internal object SignalRProtocol {
         hub: String,
         method: String,
         invocationId: String?,
-        args: Array<out Any>
+        args: Array<out Any?>
     ): String {
         val fields = linkedMapOf<String, JsonElement>(
             "H" to JsonPrimitive(hub),
@@ -122,7 +122,7 @@ internal object SignalRProtocol {
         return renderClassicEnvelope(obj, invocationId)
     }
 
-    fun createInvocationMessage(method: String, invocationId: String?, args: Array<out Any>): String {
+    fun createInvocationMessage(method: String, invocationId: String?, args: Array<out Any?>): String {
         val jsonArgs = args.map { anyToJsonElement(it) }
         val msg = HubMessageJson(
             type = 1,

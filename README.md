@@ -36,7 +36,7 @@ val connection = HubConnectionBuilder.create("https://example.com/chathub")
 
 **Logging.** By default only `WARN` and `ERROR` are logged, to standard output. Use `withLogger(AndroidSignalRLogger())` for logcat, and raise the level with `withLogLevel` while debugging. Messages are built lazily, so a level you've turned off costs nothing. Tokens, session ids, URL query strings, hub-call arguments and server payloads are logged only at `VERBOSE`; `DEBUG` and above show method names and ids, never content. A custom `SignalRLogger` that filters by level should also override `isLoggable(level)`. Your own code can use the same lazy form: `logger.log(SignalRLogLevel.DEBUG, "Tag") { "expensive $value" }`.
 
-`connect()` calls `/negotiate` first. If the server accepts WebSockets directly and doesn't expose `/negotiate`, call `shouldSkipNegotiate(true)` on the builder.
+`connect()` calls `/negotiate` first. If the server accepts WebSockets directly and doesn't expose `/negotiate`, call `shouldSkipNegotiate(true)` on the builder. Negotiate redirects are followed, using the URL and token the server hands out, so hubs behind Azure SignalR Service work. The client only speaks WebSockets, so a server that doesn't offer them fails with a clear `NegotiateException` instead of a failed socket.
 
 ### Connect and disconnect
 
@@ -48,8 +48,11 @@ lifecycleScope.launch {
 lifecycleScope.launch {
     try {
         connection.connect()
+    } catch (e: SignalRHttpException) {
+        // negotiate or classic /start failed; e.statusCode is the HTTP status, if there was one
+        if (e.isAuthFailure) authRepository.refresh()   // 401 / 403
     } catch (e: Exception) {
-        // negotiate, handshake or classic /start failed
+        // handshake failed or timed out, or the socket couldn't be opened
     }
 }
 
@@ -64,7 +67,7 @@ A `HubConnection` owns an HTTP client, so call `close()` once you no longer need
 
 `connect()` returns once the connection is up. Calling it while a connect (or reconnect) is already in progress waits for that attempt instead of starting another: it returns when the attempt connects, or throws why it didn't. Cancelling a waiting call leaves the attempt running. Calling it while already connected returns at once.
 
-`connect()`, `disconnect()`, `send()` and `invoke()` are `suspend` functions and throw their failures to the caller. Errors that happen with no caller waiting arrive on `errorFlow`: a dropped socket, an error frame from the server, or an exception thrown inside a handler.
+`connect()`, `disconnect()`, `send()` and `invoke()` are `suspend` functions and throw their failures to the caller. Errors the server reports, a failed hub method or a close message with an error, are `HubException`s, with the server's text in `serverError`. Errors that happen with no caller waiting arrive on `errorFlow`: a dropped socket, an error frame from the server, or an exception thrown inside a handler.
 
 ```kotlin
 connection.onError(lifecycleScope) { throwable -> Log.e("Hub", "SignalR error", throwable) }
@@ -138,6 +141,7 @@ val raw: JsonElement = connection.invoke("GetHistory")     // waits for the resu
 val users: List<String> = connection.invoke<List<String>>("GetOnlineUsers")
 
 val quick = connection.invoke<Quote>("GetQuote", "EURUSD", timeoutMs = 5_000) // per-call limit; 0 = none
+connection.send("SetFilter", null)                         // null arguments are sent as JSON null
 ```
 
 `invoke()` waits up to its `timeoutMs` (pass it by name), or the builder's `withInvocationTimeout` when you leave it out. Besides a server-side error, it can fail with:
@@ -202,6 +206,8 @@ curl -X POST http://127.0.0.1:8080/mock/control/reset
 
 - **JVM** (no device): `./gradlew :app:testDebugUnitTest :mockserver:test :signalr:testDebugUnitTest`. `MockServerEndToEndTest` drives the real client and auth service over real sockets against an in-process mock server.
 - **On device** (emulator or phone): `./gradlew :app:connectedDebugAndroidTest`. `ChatFlowTest` drives the app's UI (login, chat, a second user, invokes, failure switches) against a mock server started inside the test on the device. No `./gradlew :mockserver:run` and no `adb reverse` needed. With a phone plugged in, set `ANDROID_SERIAL` to choose the device.
+
+- **Public API:** `./gradlew :signalr:apiCheck` (also part of `check` and CI) fails when the library's public API differs from `signalr/api/signalr.api`. After an intended API change, run `./gradlew :signalr:apiDump`, review the diff of that file, and note any break in `CHANGELOG.md`. Explicit API mode is on too, so every public declaration needs a `public` modifier.
 
 ## Changelog
 

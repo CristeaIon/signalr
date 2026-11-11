@@ -11,6 +11,7 @@ import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -134,7 +135,7 @@ class HubConnectionLifecycleTest {
     @Test
     fun silentServerTimesOutAndClosesTheSocket() = runBlocking {
         val connection = connection(serverTimeoutMs = 300)
-        val error = async { connection.errorFlow.first() }
+        val error = async(start = CoroutineStart.UNDISPATCHED) { connection.errorFlow.first() }
         connection.connect()
 
         withTimeout(3_000) {

@@ -1,0 +1,200 @@
+public final class io/github/cristeaion/signalr/AndroidSignalRLogger : io/github/cristeaion/signalr/SignalRLogger {
+	public fun <init> ()V
+	public fun <init> (Lio/github/cristeaion/signalr/SignalRLogLevel;)V
+	public synthetic fun <init> (Lio/github/cristeaion/signalr/SignalRLogLevel;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun isLoggable (Lio/github/cristeaion/signalr/SignalRLogLevel;)Z
+	public fun log (Lio/github/cristeaion/signalr/SignalRLogLevel;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
+}
+
+public final class io/github/cristeaion/signalr/ConnectionLostException : java/io/IOException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/github/cristeaion/signalr/ConsoleSignalRLogger : io/github/cristeaion/signalr/SignalRLogger {
+	public fun <init> ()V
+	public fun <init> (Lio/github/cristeaion/signalr/SignalRLogLevel;)V
+	public synthetic fun <init> (Lio/github/cristeaion/signalr/SignalRLogLevel;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun isLoggable (Lio/github/cristeaion/signalr/SignalRLogLevel;)Z
+	public fun log (Lio/github/cristeaion/signalr/SignalRLogLevel;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
+}
+
+public final class io/github/cristeaion/signalr/ExponentialBackoffRetryPolicy : io/github/cristeaion/signalr/RetryPolicy {
+	public fun <init> ()V
+	public fun <init> (JJDDIJLkotlin/random/Random;Lkotlin/jvm/functions/Function1;)V
+	public synthetic fun <init> (JJDDIJLkotlin/random/Random;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun nextRetryDelayMs (Lio/github/cristeaion/signalr/RetryContext;)Ljava/lang/Long;
+}
+
+public abstract interface class io/github/cristeaion/signalr/HubConnection : java/lang/AutoCloseable {
+	public abstract fun close ()V
+	public abstract fun connect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun disconnect (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getConnectionState ()Lkotlinx/coroutines/flow/StateFlow;
+	public abstract fun getErrorFlow ()Lkotlinx/coroutines/flow/SharedFlow;
+	public abstract fun getEventsFlow ()Lkotlinx/coroutines/flow/SharedFlow;
+	public abstract fun getReconnectedFlow ()Lkotlinx/coroutines/flow/SharedFlow;
+	public abstract fun invoke (Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Long;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public static synthetic fun invoke$default (Lio/github/cristeaion/signalr/HubConnection;Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Long;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+	public abstract fun on (Ljava/lang/String;Lkotlin/jvm/functions/Function1;)Lio/github/cristeaion/signalr/Subscription;
+	public abstract fun send (Ljava/lang/String;[Ljava/lang/Object;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class io/github/cristeaion/signalr/HubConnection$DefaultImpls {
+	public static synthetic fun invoke$default (Lio/github/cristeaion/signalr/HubConnection;Ljava/lang/String;[Ljava/lang/Object;Ljava/lang/Long;Lkotlin/coroutines/Continuation;ILjava/lang/Object;)Ljava/lang/Object;
+}
+
+public final class io/github/cristeaion/signalr/HubConnectionBuilder {
+	public static final field Companion Lio/github/cristeaion/signalr/HubConnectionBuilder$Companion;
+	public static final field DEFAULT_KEEP_ALIVE_INTERVAL_MS J
+	public static final field DEFAULT_SERVER_TIMEOUT_MS J
+	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun build ()Lio/github/cristeaion/signalr/HubConnection;
+	public final fun shouldSkipNegotiate (Z)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withAccessTokenProvider (Lkotlin/jvm/functions/Function1;)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withAutomaticReconnect ()Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withAutomaticReconnect (Lio/github/cristeaion/signalr/RetryPolicy;)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withAutomaticReconnect (Ljava/util/List;)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withHandshakeTimeout (J)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withHeader (Ljava/lang/String;Ljava/lang/String;)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withHeaders (Ljava/util/Map;)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withInvocationTimeout (J)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withKeepAliveInterval (J)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withLogLevel (Lio/github/cristeaion/signalr/SignalRLogLevel;)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withLogger (Lio/github/cristeaion/signalr/SignalRLogger;)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+	public final fun withServerTimeout (J)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+}
+
+public final class io/github/cristeaion/signalr/HubConnectionBuilder$Companion {
+	public final fun create (Ljava/lang/String;)Lio/github/cristeaion/signalr/HubConnectionBuilder;
+}
+
+public final class io/github/cristeaion/signalr/HubConnectionExtensionsKt {
+	public static final fun eventsFor (Lio/github/cristeaion/signalr/HubConnection;Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
+	public static final fun onError (Lio/github/cristeaion/signalr/HubConnection;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function1;)Lkotlinx/coroutines/Job;
+	public static final fun onFlowRaw (Lio/github/cristeaion/signalr/HubConnection;Ljava/lang/String;)Lkotlinx/coroutines/flow/Flow;
+	public static final fun onReconnected (Lio/github/cristeaion/signalr/HubConnection;Lkotlinx/coroutines/CoroutineScope;Lkotlin/jvm/functions/Function1;)Lkotlinx/coroutines/Job;
+}
+
+public final class io/github/cristeaion/signalr/HubConnectionState : java/lang/Enum {
+	public static final field CONNECTED Lio/github/cristeaion/signalr/HubConnectionState;
+	public static final field CONNECTING Lio/github/cristeaion/signalr/HubConnectionState;
+	public static final field DISCONNECTED Lio/github/cristeaion/signalr/HubConnectionState;
+	public static final field RECONNECTING Lio/github/cristeaion/signalr/HubConnectionState;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/cristeaion/signalr/HubConnectionState;
+	public static fun values ()[Lio/github/cristeaion/signalr/HubConnectionState;
+}
+
+public final class io/github/cristeaion/signalr/HubException : java/lang/RuntimeException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun getServerError ()Ljava/lang/String;
+}
+
+public final class io/github/cristeaion/signalr/InvocationTimeoutException : java/io/IOException {
+	public fun <init> (Ljava/lang/String;J)V
+	public final fun getMethod ()Ljava/lang/String;
+	public final fun getTimeoutMs ()J
+}
+
+public final class io/github/cristeaion/signalr/JsonDecodingKt {
+	public static final fun getSignalRJson ()Lkotlinx/serialization/json/Json;
+}
+
+public final class io/github/cristeaion/signalr/NegotiateException : io/github/cristeaion/signalr/SignalRHttpException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class io/github/cristeaion/signalr/NoOpSignalRLogger : io/github/cristeaion/signalr/SignalRLogger {
+	public static final field INSTANCE Lio/github/cristeaion/signalr/NoOpSignalRLogger;
+	public fun isLoggable (Lio/github/cristeaion/signalr/SignalRLogLevel;)Z
+	public fun log (Lio/github/cristeaion/signalr/SignalRLogLevel;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
+}
+
+public final class io/github/cristeaion/signalr/ReconnectFailedException : java/io/IOException {
+	public fun <init> (ILjava/lang/Throwable;)V
+	public final fun getAttempts ()I
+}
+
+public final class io/github/cristeaion/signalr/RetryContext {
+	public fun <init> (IJLjava/lang/Throwable;)V
+	public final fun component1 ()I
+	public final fun component2 ()J
+	public final fun component3 ()Ljava/lang/Throwable;
+	public final fun copy (IJLjava/lang/Throwable;)Lio/github/cristeaion/signalr/RetryContext;
+	public static synthetic fun copy$default (Lio/github/cristeaion/signalr/RetryContext;IJLjava/lang/Throwable;ILjava/lang/Object;)Lio/github/cristeaion/signalr/RetryContext;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getElapsedMs ()J
+	public final fun getPreviousRetryCount ()I
+	public final fun getRetryReason ()Ljava/lang/Throwable;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class io/github/cristeaion/signalr/RetryPolicy {
+	public static final field Companion Lio/github/cristeaion/signalr/RetryPolicy$Companion;
+	public abstract fun nextRetryDelayMs (Lio/github/cristeaion/signalr/RetryContext;)Ljava/lang/Long;
+}
+
+public final class io/github/cristeaion/signalr/RetryPolicy$Companion {
+	public final fun fixedDelays (Ljava/util/List;)Lio/github/cristeaion/signalr/RetryPolicy;
+}
+
+public final class io/github/cristeaion/signalr/ServerTimeoutException : java/io/IOException {
+	public fun <init> (J)V
+	public final fun getTimeoutMs ()J
+}
+
+public final class io/github/cristeaion/signalr/SignalREvent {
+	public fun <init> (Ljava/lang/String;Ljava/util/List;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/util/List;
+	public final fun copy (Ljava/lang/String;Ljava/util/List;)Lio/github/cristeaion/signalr/SignalREvent;
+	public static synthetic fun copy$default (Lio/github/cristeaion/signalr/SignalREvent;Ljava/lang/String;Ljava/util/List;ILjava/lang/Object;)Lio/github/cristeaion/signalr/SignalREvent;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArguments ()Ljava/util/List;
+	public final fun getTarget ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public class io/github/cristeaion/signalr/SignalRHttpException : java/io/IOException {
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun getStatusCode ()Ljava/lang/Integer;
+	public final fun isAuthFailure ()Z
+}
+
+public final class io/github/cristeaion/signalr/SignalRLogLevel : java/lang/Enum {
+	public static final field DEBUG Lio/github/cristeaion/signalr/SignalRLogLevel;
+	public static final field ERROR Lio/github/cristeaion/signalr/SignalRLogLevel;
+	public static final field INFO Lio/github/cristeaion/signalr/SignalRLogLevel;
+	public static final field NONE Lio/github/cristeaion/signalr/SignalRLogLevel;
+	public static final field VERBOSE Lio/github/cristeaion/signalr/SignalRLogLevel;
+	public static final field WARN Lio/github/cristeaion/signalr/SignalRLogLevel;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Lio/github/cristeaion/signalr/SignalRLogLevel;
+	public static fun values ()[Lio/github/cristeaion/signalr/SignalRLogLevel;
+}
+
+public abstract interface class io/github/cristeaion/signalr/SignalRLogger {
+	public fun isLoggable (Lio/github/cristeaion/signalr/SignalRLogLevel;)Z
+	public abstract fun log (Lio/github/cristeaion/signalr/SignalRLogLevel;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)V
+	public static synthetic fun log$default (Lio/github/cristeaion/signalr/SignalRLogger;Lio/github/cristeaion/signalr/SignalRLogLevel;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;ILjava/lang/Object;)V
+}
+
+public final class io/github/cristeaion/signalr/SignalRLogger$DefaultImpls {
+	public static fun isLoggable (Lio/github/cristeaion/signalr/SignalRLogger;Lio/github/cristeaion/signalr/SignalRLogLevel;)Z
+	public static synthetic fun log$default (Lio/github/cristeaion/signalr/SignalRLogger;Lio/github/cristeaion/signalr/SignalRLogLevel;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;ILjava/lang/Object;)V
+}
+
+public final class io/github/cristeaion/signalr/SignalRLoggerKt {
+	public static final fun log (Lio/github/cristeaion/signalr/SignalRLogger;Lio/github/cristeaion/signalr/SignalRLogLevel;Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/functions/Function0;)V
+	public static synthetic fun log$default (Lio/github/cristeaion/signalr/SignalRLogger;Lio/github/cristeaion/signalr/SignalRLogLevel;Ljava/lang/String;Ljava/lang/Throwable;Lkotlin/jvm/functions/Function0;ILjava/lang/Object;)V
+}
+
+public abstract interface class io/github/cristeaion/signalr/Subscription {
+	public abstract fun cancel ()V
+}
+

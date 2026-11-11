@@ -10,20 +10,20 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 
 /** Decodes the argument at [index], or `null`/default handling if the server omitted it. */
-inline fun <reified T> List<JsonElement>.decodeArg(index: Int): T =
+public inline fun <reified T> List<JsonElement>.decodeArg(index: Int): T =
     decodeJsonElementSafe(getOrElse(index) { JsonNull })
 
-inline fun <reified T1> HubConnection.on(
+public inline fun <reified T1> HubConnection.on(
     method: String,
     crossinline action: (T1) -> Unit
 ): Subscription = on(method) { args -> action(args.decodeArg(0)) }
 
-inline fun <reified T1, reified T2> HubConnection.on(
+public inline fun <reified T1, reified T2> HubConnection.on(
     method: String,
     crossinline action: (T1, T2) -> Unit
 ): Subscription = on(method) { args -> action(args.decodeArg(0), args.decodeArg(1)) }
 
-inline fun <reified T1, reified T2, reified T3> HubConnection.on(
+public inline fun <reified T1, reified T2, reified T3> HubConnection.on(
     method: String,
     crossinline action: (T1, T2, T3) -> Unit
 ): Subscription = on(method) { args -> action(args.decodeArg(0), args.decodeArg(1), args.decodeArg(2)) }
@@ -32,37 +32,37 @@ inline fun <reified T1, reified T2, reified T3> HubConnection.on(
  * Typed result variant of [HubConnection.invoke]. The explicit type argument selects this over the
  * raw member, which is what the body below calls.
  */
-suspend inline fun <reified T> HubConnection.invoke(method: String, vararg args: Any, timeoutMs: Long? = null): T {
+public suspend inline fun <reified T> HubConnection.invoke(method: String, vararg args: Any?, timeoutMs: Long? = null): T {
     val result: JsonElement = invoke(method, *args, timeoutMs = timeoutMs)
     return decodeJsonElementSafe(result)
 }
 
 /** Collects [HubConnection.errorFlow] into [action] for as long as [scope] is active. */
-fun HubConnection.onError(scope: CoroutineScope, action: (Throwable) -> Unit): Job =
+public fun HubConnection.onError(scope: CoroutineScope, action: (Throwable) -> Unit): Job =
     scope.launch { errorFlow.collect(action) }
 
 /** Runs [action] each time automatic reconnect restores the connection, for as long as [scope] is active. */
-fun HubConnection.onReconnected(scope: CoroutineScope, action: suspend () -> Unit): Job =
+public fun HubConnection.onReconnected(scope: CoroutineScope, action: suspend () -> Unit): Job =
     scope.launch { reconnectedFlow.collect { action() } }
 
 /** Type-safe Flow extension functions for HubConnection events. */
 @JvmName("onFlowRaw")
-fun HubConnection.onFlow(method: String): Flow<List<JsonElement>> =
+public fun HubConnection.onFlow(method: String): Flow<List<JsonElement>> =
     eventsFor(method).map { event -> event.arguments }
 
 @JvmName("onFlow1")
-inline fun <reified T1> HubConnection.onFlow(method: String): Flow<T1> =
+public inline fun <reified T1> HubConnection.onFlow(method: String): Flow<T1> =
     eventsFor(method).map { event -> event.arguments.decodeArg<T1>(0) }
 
 @JvmName("onFlow2")
-inline fun <reified T1, reified T2> HubConnection.onFlow(method: String): Flow<Pair<T1, T2>> =
+public inline fun <reified T1, reified T2> HubConnection.onFlow(method: String): Flow<Pair<T1, T2>> =
     eventsFor(method).map { event ->
         val args = event.arguments
         Pair(args.decodeArg<T1>(0), args.decodeArg<T2>(1))
     }
 
 @JvmName("onFlow3")
-inline fun <reified T1, reified T2, reified T3> HubConnection.onFlow(method: String): Flow<Triple<T1, T2, T3>> =
+public inline fun <reified T1, reified T2, reified T3> HubConnection.onFlow(method: String): Flow<Triple<T1, T2, T3>> =
     eventsFor(method).map { event ->
         val args = event.arguments
         Triple(args.decodeArg<T1>(0), args.decodeArg<T2>(1), args.decodeArg<T3>(2))

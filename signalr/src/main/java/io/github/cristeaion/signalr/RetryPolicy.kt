@@ -9,16 +9,16 @@ import kotlin.random.Random
  * Decides whether, and after how long, a dropped connection tries to reconnect. Used by
  * [HubConnectionBuilder.withAutomaticReconnect].
  */
-fun interface RetryPolicy {
+public fun interface RetryPolicy {
     /**
      * Returns how many milliseconds to wait before the next reconnect attempt, or `null` to stop
      * reconnecting. Called before every attempt, including the first one.
      */
-    fun nextRetryDelayMs(context: RetryContext): Long?
+    public fun nextRetryDelayMs(context: RetryContext): Long?
 
-    companion object {
+    public companion object {
         /** Makes one attempt after each delay in [delaysMs], in order, then gives up. */
-        fun fixedDelays(delaysMs: List<Long>): RetryPolicy {
+        public fun fixedDelays(delaysMs: List<Long>): RetryPolicy {
             require(delaysMs.all { it >= 0 }) { "Retry delays must be >= 0, were $delaysMs" }
             val delays = delaysMs.toList()
             return RetryPolicy { context -> delays.getOrNull(context.previousRetryCount) }
@@ -27,7 +27,7 @@ fun interface RetryPolicy {
 }
 
 /** What a [RetryPolicy] knows when it picks the next delay. */
-data class RetryContext(
+public data class RetryContext(
     /** Attempts already made since the connection was lost; 0 before the first one. */
     val previousRetryCount: Int,
     /** Milliseconds since the connection was lost. */
@@ -49,7 +49,7 @@ data class RetryContext(
  * gives up. Limit it with [maxRetries] or [maxElapsedMs], or call `disconnect()` yourself,
  * for example when the app goes to the background.
  */
-class ExponentialBackoffRetryPolicy(
+public class ExponentialBackoffRetryPolicy(
     private val initialDelayMs: Long = 1_000,
     private val maxDelayMs: Long = 30_000,
     private val multiplier: Double = 2.0,
@@ -59,6 +59,12 @@ class ExponentialBackoffRetryPolicy(
     /** Stop once this long has passed since the connection was lost; 0 = no limit. */
     private val maxElapsedMs: Long = 0,
     private val random: Random = Random.Default,
+    /**
+     * Stop when this returns false for the last failure (`null` when the server closed cleanly).
+     * For example, to give up once the server rejects the credentials:
+     * `shouldRetry = { (it as? SignalRHttpException)?.isAuthFailure != true }`.
+     */
+    private val shouldRetry: (Throwable?) -> Boolean = { true },
 ) : RetryPolicy {
 
     init {
@@ -72,6 +78,7 @@ class ExponentialBackoffRetryPolicy(
 
     override fun nextRetryDelayMs(context: RetryContext): Long? {
         if (context.previousRetryCount >= maxRetries) return null
+        if (!shouldRetry(context.retryReason)) return null
         if (maxElapsedMs > 0 && context.elapsedMs >= maxElapsedMs) return null
         val base = min(maxDelayMs.toDouble(), initialDelayMs * multiplier.pow(context.previousRetryCount))
         val jitter = if (jitterFactor > 0) base * jitterFactor * (random.nextDouble() * 2 - 1) else 0.0

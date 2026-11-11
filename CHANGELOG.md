@@ -30,6 +30,19 @@ release may contain breaking changes; they are always listed under **Breaking**.
   `Theme.MaterialComponents` theme, must now declare them themselves.
 - An argument with no serializer now makes `send()` / `invoke()` throw
   `IllegalArgumentException`. It used to be sent as `toString()`.
+- Failures reported by the server, and HTTP failures while connecting, now have their own types
+  in place of `RuntimeException`:
+  - `HubException`, still a `RuntimeException`, for a failed hub method or a close message with
+    an error. The server's text is in `serverError`.
+  - `SignalRHttpException`, now an `IOException`, for a non-2xx answer to classic `/start`,
+    with `statusCode` and `isAuthFailure`. Its subclass `NegotiateException` covers negotiate:
+    a non-2xx status, an `error` in the answer, a server without WebSockets, or too many
+    redirects. `catch (e: RuntimeException)` no longer catches these.
+  - The classic `/start` failure message no longer includes the response body. The body is
+    logged at `VERBOSE` only.
+- `send()` and `invoke()` take `vararg args: Any?`, so `null` arguments are allowed and sent as
+  JSON `null`. Callers need no change, but custom `HubConnection` implementations must update
+  their overrides.
 - `connect()` called while a connect or reconnect is in progress now waits for that attempt.
   It returns when the attempt connects, or throws why it didn't. It used to return immediately
   while the state was still `CONNECTING`.
@@ -51,6 +64,14 @@ release may contain breaking changes; they are always listed under **Breaking**.
   calls, set with `withInvocationTimeout(ms)`. When time runs out, `invoke()` throws
   `InvocationTimeoutException` and the connection stays up.
 - `ConnectionLostException`. Its `cause` says why the connection dropped, when that's known.
+- Negotiate redirects are followed, as the official clients do (up to 100). Each redirect's URL
+  and access token are used from then on, so hubs behind Azure SignalR Service work.
+- Negotiate checks that the server offers WebSockets with text frames. If it doesn't, connect
+  fails with a `NegotiateException` that says so.
+- `ExponentialBackoffRetryPolicy(shouldRetry = ...)` stops retrying based on the last failure,
+  for example `{ (it as? SignalRHttpException)?.isAuthFailure != true }`.
+- The public API is checked: explicit API mode is on, `signalr/api/signalr.api` records the
+  API, and `apiCheck` in CI fails on any unrecorded change.
 - Classic SignalR: `disconnect()` and `close()` send `/abort` (best effort, up to 2s), so the
   server runs `OnDisconnected` at once instead of after its DisconnectTimeout. The server's
   disconnect command (`"D":1`) ends the connection without reconnecting, and its reconnect
@@ -85,6 +106,9 @@ release may contain breaking changes; they are always listed under **Breaking**.
   false server timeout.
 - An `invoke()` started at the moment the connection dropped could wait forever. It now fails
   with `ConnectionLostException`.
+- The library was compiled by Kotlin 2.2.10 with the 2.0.21 serialization compiler plugin. All
+  Kotlin plugins now take their version from the version catalog's `kotlin` entry, so the
+  compiler and its plugins always match.
 
 ## [0.0.2] - 2026-11-06
 

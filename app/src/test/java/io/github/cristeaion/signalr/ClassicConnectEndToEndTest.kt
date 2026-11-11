@@ -57,9 +57,10 @@ class ClassicConnectEndToEndTest {
         try {
             connection.connect()
             fail("Expected /start to be rejected")
-        } catch (e: RuntimeException) {
+        } catch (e: SignalRHttpException) {
             // /start runs only once the WebSocket is open, so this proves a socket was opened.
             assertTrue(e.message!!, e.message!!.contains("Classic start failed"))
+            assertEquals(500, e.statusCode)
         }
 
         assertEquals(HubConnectionState.DISCONNECTED, connection.connectionState.value)

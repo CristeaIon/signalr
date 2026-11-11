@@ -4,6 +4,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.websocket.WebSockets as ClientWebSockets
 import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
@@ -23,6 +24,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.URLEncoder
@@ -36,6 +39,7 @@ class ClassicCommandsTest {
     private val tokens = AtomicInteger(0)
     private val aborts = CopyOnWriteArrayList<String>()
     @Volatile private var current: DefaultWebSocketServerSession? = null
+    @Volatile private var startStatus = HttpStatusCode.OK
 
     private val server = embeddedServer(CIO, port = 0, host = "127.0.0.1") {
         install(WebSockets)
@@ -46,7 +50,9 @@ class ClassicCommandsTest {
                     ContentType.Application.Json,
                 )
             }
-            get("/signalr/start") { call.respondText("""{"Response":"started"}""", ContentType.Application.Json) }
+            get("/signalr/start") {
+                call.respondText("""{"Response":"started","Secret":"start-body"}""", ContentType.Application.Json, startStatus)
+            }
             post("/signalr/abort") {
                 aborts += call.request.uri
                 call.respondText("")
@@ -87,6 +93,17 @@ class ClassicCommandsTest {
         withTimeout(5_000) { connectionState.first { it == state } }
 
     private suspend fun awaitAborts(count: Int) = withTimeout(3_000) { while (aborts.size < count) delay(10) }
+
+    @Test
+    fun aFailedStartExposesItsStatusButNotItsBody() {
+        startStatus = HttpStatusCode.Forbidden
+
+        val error = assertThrows(SignalRHttpException::class.java) { runBlocking { connection().connect() } }
+
+        assertEquals(403, error.statusCode)
+        assertTrue(error.isAuthFailure)
+        assertFalse(error.message, error.message!!.contains("start-body"))
+    }
 
     @Test
     fun disconnectSendsAbortForTheConnection() = runBlocking {

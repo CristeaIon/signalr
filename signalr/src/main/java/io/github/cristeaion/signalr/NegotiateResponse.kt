@@ -24,6 +24,11 @@ internal data class NegotiateResponse(
     /** Classic only: seconds without any frame after which the connection is dead; null = keep-alive off. */
     @SerialName("KeepAliveTimeout")
     val keepAliveTimeout: Double? = null,
+    /**
+     * Core only: negotiate redirect, e.g. Azure SignalR Service. Negotiate again at this URL,
+     * using [accessToken]. Distinct from classic's capitalised "Url", which is just its path.
+     */
+    val url: String? = null,
     val accessToken: String? = null
 ) {
     fun getEffectiveConnectionToken(): String? {

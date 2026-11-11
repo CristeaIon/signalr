@@ -3,7 +3,7 @@ package io.github.cristeaion.signalr
 import android.util.Log
 
 /** Writes to Logcat. */
-class AndroidSignalRLogger(
+public class AndroidSignalRLogger(
     private val minLevel: SignalRLogLevel = SignalRLogLevel.DEBUG
 ) : SignalRLogger {
     override fun isLoggable(level: SignalRLogLevel): Boolean = level.isAtLeast(minLevel)

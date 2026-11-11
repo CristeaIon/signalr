@@ -32,6 +32,9 @@ jobs:
       - name: Run unit tests
         run: ./gradlew test --console=plain
 
+      - name: Check the public API against signalr/api/signalr.api
+        run: ./gradlew :signalr:apiCheck --console=plain
+
       - name: Build library release AAR
         run: ./gradlew :signalr:assembleRelease --console=plain
 

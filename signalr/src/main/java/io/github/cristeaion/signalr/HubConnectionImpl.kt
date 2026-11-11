@@ -47,6 +47,9 @@ private const val TAG = "HubConnection"
 /** Sent unless the app sets its own `User-Agent` header. */
 private const val CLASSIC_ABORT_TIMEOUT_MS = 2_000L
 
+/** Same limit as the official clients. */
+private const val MAX_NEGOTIATE_REDIRECTS = 100
+
 internal const val DEFAULT_USER_AGENT = "signalr-kotlin/${BuildConfig.LIBRARY_VERSION}"
 
 internal class HubConnectionImpl(
@@ -197,11 +200,34 @@ internal class HubConnectionImpl(
         }
 
         var negotiateResponse: NegotiateResponse? = null
+        // A Core server may redirect negotiate (Azure SignalR Service does), handing out the URL
+        // and token to use from then on.
+        var hubUrl = baseUrl
+        var hubToken = token
         if (!skipNegotiate) {
-            negotiateResponse = negotiate(baseUrl, headersWithAuth)
-            if (negotiateResponse.error != null) {
-                throw RuntimeException("Negotiate error: ${negotiateResponse.error}")
+            var redirects = 0
+            while (true) {
+                val response = negotiate(hubUrl, headersWithAuth)
+                if (response.error != null) {
+                    throw NegotiateException("Negotiate error: ${response.error}")
+                }
+                val redirectUrl = response.url
+                if (isClassic || redirectUrl.isNullOrEmpty()) {
+                    negotiateResponse = response
+                    break
+                }
+                if (++redirects > MAX_NEGOTIATE_REDIRECTS) {
+                    throw NegotiateException("Negotiate redirected more than $MAX_NEGOTIATE_REDIRECTS times.")
+                }
+                log(SignalRLogLevel.INFO) { "Negotiate redirected to ${withoutQuery(redirectUrl)}." }
+                hubUrl = redirectUrl
+                response.accessToken?.let { redirectToken ->
+                    hubToken = redirectToken
+                    headersWithAuth.keys.removeAll { it.equals("Authorization", ignoreCase = true) }
+                    headersWithAuth["Authorization"] = "Bearer $redirectToken"
+                }
             }
+            requireWebSockets(negotiateResponse)
             log(SignalRLogLevel.INFO) { "Negotiation successful." }
             // Secrets and payloads (tokens, URLs with queries, hub arguments, server data) are
             // logged at VERBOSE only.
@@ -210,7 +236,7 @@ internal class HubConnectionImpl(
             log(SignalRLogLevel.INFO) { "Skipping negotiation phase as requested." }
         }
 
-        val wsUrl = buildWebSocketUrl(baseUrl, negotiateResponse, token)
+        val wsUrl = buildWebSocketUrl(hubUrl, negotiateResponse, hubToken)
         log(SignalRLogLevel.INFO) { "Opening WebSocket connection..." }
         log(SignalRLogLevel.VERBOSE) { "WebSocket URL: $wsUrl" }
 
@@ -268,6 +294,25 @@ internal class HubConnectionImpl(
         startHeartbeat(scope, ws, effectiveServerTimeoutMs(negotiateResponse))
     }
 
+    /** This client only speaks WebSockets with text frames; fail clearly if the server won't. */
+    private fun requireWebSockets(response: NegotiateResponse) {
+        if (isClassic) {
+            if (response.tryWebSockets == false) {
+                throw NegotiateException("The server doesn't allow WebSockets (TryWebSockets=false), the only transport this client supports.")
+            }
+            return
+        }
+        val transports = response.availableTransports ?: return
+        val webSockets = transports.firstOrNull { it.transport.equals("WebSockets", ignoreCase = true) }
+            ?: throw NegotiateException(
+                "The server doesn't offer WebSockets, the only transport this client supports " +
+                    "(it offers ${transports.map { it.transport }}).",
+            )
+        if (webSockets.transferFormats.isNotEmpty() && webSockets.transferFormats.none { it.equals("Text", ignoreCase = true) }) {
+            throw NegotiateException("The server's WebSockets transport doesn't support text frames, which the JSON protocol needs.")
+        }
+    }
+
     private suspend fun performHandshake(ws: WebSocketSession) {
         log(SignalRLogLevel.DEBUG) { "Sending SignalR handshake request frame..." }
         sendText(ws, SignalRProtocol.createHandshakeMessage())
@@ -319,7 +364,7 @@ internal class HubConnectionImpl(
                     val close = handleIncomingPayload(frame.readText()) ?: continue
                     allowReconnect = close.allowReconnect
                     if (close.error != null) {
-                        cause = RuntimeException("Server closed the connection: ${close.error}").also { notifyError(it) }
+                        cause = HubException("Server closed the connection: ${close.error}", close.error).also { notifyError(it) }
                     }
                     break
                 }
@@ -404,7 +449,9 @@ internal class HubConnectionImpl(
 
         val body = response.bodyAsText()
         if (response.status.value !in 200..299) {
-            throw RuntimeException("Classic start failed with status ${response.status}: $body")
+            // The body stays out of the message: exceptions are logged at ERROR, payloads only at VERBOSE.
+            log(SignalRLogLevel.VERBOSE) { "Classic start error response: $body" }
+            throw SignalRHttpException("Classic start failed with status ${response.status}.", response.status.value)
         }
         log(SignalRLogLevel.INFO) { "Classic start acknowledged." }
         log(SignalRLogLevel.VERBOSE) { "Classic start response: $body" }
@@ -423,7 +470,7 @@ internal class HubConnectionImpl(
         log(SignalRLogLevel.DEBUG) { "Negotiate response HTTP status: ${response.status}" }
 
         if (response.status.value !in 200..299) {
-            throw RuntimeException("Negotiate failed with status ${response.status}")
+            throw NegotiateException("Negotiate failed with status ${response.status}.", response.status.value)
         }
 
         val responseText = response.bodyAsText()
@@ -461,7 +508,7 @@ internal class HubConnectionImpl(
     private fun completeInvocation(id: String, result: JsonElement?, error: String?) {
         val deferred = pendingInvokes.remove(id)
         if (error != null) {
-            val err = RuntimeException("Invocation '$id' failed: $error")
+            val err = HubException("Invocation '$id' failed: $error", error)
             if (deferred != null) deferred.completeExceptionally(err) else notifyError(err)
         } else {
             val value = result ?: JsonNull
@@ -789,7 +836,7 @@ internal class HubConnectionImpl(
         }
     }
 
-    private fun formatOutgoingMessage(method: String, args: Array<out Any>, invocationId: String?): String {
+    private fun formatOutgoingMessage(method: String, args: Array<out Any?>, invocationId: String?): String {
         // A caller may hand us a ready-made classic envelope, either as the method itself
         // (e.g. {"H":"quoteshub","M":"Subscribe..."}) or as a single string argument.
         SignalRProtocol.asClassicEnvelope(method)?.let {
@@ -820,7 +867,7 @@ internal class HubConnectionImpl(
         return SignalRProtocol.createInvocationMessage(method, invocationId, args)
     }
 
-    override suspend fun send(method: String, vararg args: Any) {
+    override suspend fun send(method: String, vararg args: Any?) {
         val activeSession = requireConnected(method)
         val frameText = formatOutgoingMessage(method, args, null)
         log(SignalRLogLevel.DEBUG) { "Sending '${describeMethod(method)}'." }
@@ -828,7 +875,7 @@ internal class HubConnectionImpl(
         sendText(activeSession, frameText)
     }
 
-    override suspend fun invoke(method: String, vararg args: Any, timeoutMs: Long?): JsonElement {
+    override suspend fun invoke(method: String, vararg args: Any?, timeoutMs: Long?): JsonElement {
         require(timeoutMs == null || timeoutMs >= 0) { "timeoutMs must be >= 0, was $timeoutMs" }
         val effectiveTimeoutMs = timeoutMs ?: invocationTimeoutMs
         val activeSession = requireConnected(method)

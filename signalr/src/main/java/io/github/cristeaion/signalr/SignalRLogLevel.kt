@@ -1,5 +1,5 @@
 package io.github.cristeaion.signalr
 
-enum class SignalRLogLevel {
+public enum class SignalRLogLevel {
     VERBOSE, DEBUG, INFO, WARN, ERROR, NONE
 }

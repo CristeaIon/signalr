@@ -43,6 +43,15 @@ class RetryPolicyTest {
     }
 
     @Test
+    fun backoffStopsWhenShouldRetryRejectsTheFailure() {
+        val policy = ExponentialBackoffRetryPolicy(shouldRetry = { (it as? SignalRHttpException)?.isAuthFailure != true })
+
+        assertNull(policy.nextRetryDelayMs(RetryContext(1, 0, NegotiateException("no", statusCode = 401))))
+        assertTrue(policy.nextRetryDelayMs(RetryContext(1, 0, NegotiateException("down", statusCode = 503))) != null)
+        assertTrue(policy.nextRetryDelayMs(RetryContext(0, 0, null)) != null)
+    }
+
+    @Test
     fun fixedDelaysAreUsedInOrderThenStop() {
         val policy = RetryPolicy.fixedDelays(listOf(0, 2_000, 10_000))
 

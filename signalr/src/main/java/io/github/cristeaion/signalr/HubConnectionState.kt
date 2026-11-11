@@ -1,6 +1,6 @@
 package io.github.cristeaion.signalr
 
-enum class HubConnectionState {
+public enum class HubConnectionState {
     DISCONNECTED,
     CONNECTING,
     CONNECTED,
