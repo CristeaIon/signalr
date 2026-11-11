@@ -27,6 +27,7 @@ val connection = HubConnectionBuilder.create("https://example.com/chathub")
     .withHandshakeTimeout(15_000)
     .withKeepAliveInterval(15_000)                               // ping when idle (Core servers); 0 = off
     .withServerTimeout(30_000)                                   // drop after this long without a message; 0 = off
+    .withInvocationTimeout(10_000)                               // default limit for invoke(); 0 (default) = no limit
     .build()
 ```
 
@@ -60,6 +61,8 @@ connection.close()        // disconnects and releases the HTTP client; does not 
 
 A `HubConnection` owns an HTTP client, so call `close()` once you no longer need it. It is `AutoCloseable`. If `connect()` fails at any step (negotiate, handshake, handshake timeout, classic `/start`), the WebSocket that was opened is closed before the exception reaches you.
 
+`connect()` returns once the connection is up. Calling it while a connect (or reconnect) is already in progress waits for that attempt instead of starting another: it returns when the attempt connects, or throws why it didn't. Cancelling a waiting call leaves the attempt running. Calling it while already connected returns at once.
+
 `connect()`, `disconnect()`, `send()` and `invoke()` are `suspend` functions and throw their failures to the caller. Errors that happen with no caller waiting arrive on `errorFlow`: a dropped socket, an error frame from the server, or an exception thrown inside a handler.
 
 ```kotlin
@@ -81,7 +84,7 @@ HubConnectionBuilder.create(url)
 
 - **Triggers:** a socket error, the server closing the socket, a server timeout, or an ASP.NET Core close message with `allowReconnect: true`. A close message without it (for example after an auth failure) disconnects without retrying.
 - **Not retried:** a failed first `connect()`. It throws as before.
-- While retrying, the state is `RECONNECTING`, and `send()` / `invoke()` throw. `invoke()` calls still waiting when the connection drops are cancelled.
+- While retrying, the state is `RECONNECTING`, and `send()` / `invoke()` throw. `invoke()` calls still waiting when the connection drops fail with `ConnectionLostException`.
 - `disconnect()` and `close()` stop a reconnect that is in progress.
 - When a policy gives up, the state becomes `DISCONNECTED` and a `ReconnectFailedException` (with the attempt count and the last failure as its cause) is emitted on `errorFlow`.
 - Each attempt negotiates again and asks the `accessTokenProvider` for a fresh token. Handlers registered with `on(...)` stay registered.
@@ -111,6 +114,8 @@ connection.on("UserJoined") { args: List<JsonElement> ->   // raw JSON arguments
 sub.cancel() // unregister that handler
 ```
 
+Handlers run on a background thread, one at a time, in the order the server sent the calls. They run separately from the socket reader, so a slow handler doesn't hold up the connection: frames, pings and `invoke()` results keep arriving, and it can't cause a false server timeout. A slow handler still delays the handlers queued after it, so move long work into your own coroutine. A handler cancelled with `sub.cancel()` doesn't run for calls already queued.
+
 You can also collect events as a `Flow`:
 
 ```kotlin
@@ -130,7 +135,16 @@ connection.send("Send", "Hello!")                          // fire-and-forget
 
 val raw: JsonElement = connection.invoke("GetHistory")     // waits for the result
 val users: List<String> = connection.invoke<List<String>>("GetOnlineUsers")
+
+val quick = connection.invoke<Quote>("GetQuote", "EURUSD", timeoutMs = 5_000) // per-call limit; 0 = none
 ```
+
+`invoke()` waits up to its `timeoutMs` (pass it by name), or the builder's `withInvocationTimeout` when you leave it out. Besides a server-side error, it can fail with:
+
+- `InvocationTimeoutException`: no result in time. The connection stays up, and a late result is ignored.
+- `ConnectionLostException`: the connection dropped, or `disconnect()` / `close()` was called, before the result arrived. Its `cause` says why the connection dropped, if known. The server may or may not have run the method.
+
+Neither is a `CancellationException`, so they reach your `catch` and don't silently end the calling coroutine.
 
 Arguments can be primitives, `Map`s, collections, arrays, `JsonElement`s or `@Serializable` objects.
 

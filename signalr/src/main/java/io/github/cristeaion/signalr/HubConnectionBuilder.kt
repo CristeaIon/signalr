@@ -17,6 +17,7 @@ class HubConnectionBuilder private constructor(private val url: String) {
     private var logger: SignalRLogger? = null
     private var logLevel: SignalRLogLevel = SignalRLogLevel.DEBUG
     private var retryPolicy: RetryPolicy? = null
+    private var invocationTimeoutMs: Long = 0
 
     companion object {
         /** Same defaults as the official ASP.NET Core clients. */
@@ -109,7 +110,18 @@ class HubConnectionBuilder private constructor(private val url: String) {
         return this
     }
 
-    fun shouldSkipNegotiate(skipNegotiate: Boolean): HubConnectionBuilder {
+    /**
+     * The default limit on how long [HubConnection.invoke] waits for a result before it throws
+     * [InvocationTimeoutException]. A call can override it with its own `timeoutMs`.
+     * `0` (the default) waits as long as the connection lasts.
+     */
+    fun withInvocationTimeout(timeoutInMilliseconds: Long): HubConnectionBuilder {
+        require(timeoutInMilliseconds >= 0) { "Invocation timeout must be >= 0, was $timeoutInMilliseconds" }
+        this.invocationTimeoutMs = timeoutInMilliseconds
+        return this
+    }
+
+        fun shouldSkipNegotiate(skipNegotiate: Boolean): HubConnectionBuilder {
         this.skipNegotiate = skipNegotiate
         return this
     }
@@ -135,6 +147,7 @@ class HubConnectionBuilder private constructor(private val url: String) {
             keepAliveIntervalMs,
             serverTimeoutMs,
             retryPolicy,
+            invocationTimeoutMs,
         )
     }
 }

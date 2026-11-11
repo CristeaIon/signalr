@@ -19,6 +19,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -55,6 +56,8 @@ internal class HubConnectionImpl(
     private val serverTimeoutMs: Long = HubConnectionBuilder.DEFAULT_SERVER_TIMEOUT_MS,
     /** Null: a dropped connection stays DISCONNECTED. Otherwise it reconnects as this policy says. */
     private val retryPolicy: RetryPolicy? = null,
+    /** Default for [invoke] calls that don't pass their own timeout; 0 = wait as long as the connection lasts. */
+    private val invocationTimeoutMs: Long = 0,
 ) : HubConnection {
 
     private val _connectionState = MutableStateFlow(HubConnectionState.DISCONNECTED)
@@ -78,6 +81,12 @@ internal class HubConnectionImpl(
     @Volatile private var clientScope: CoroutineScope? = null
     /** The running reconnect loop, set only while the state is RECONNECTING. */
     @Volatile private var reconnectJob: Job? = null
+    /**
+     * The outcome of the connect or reconnect in progress, set while the state is CONNECTING or
+     * RECONNECTING. Completed when the state reaches CONNECTED, failed when it falls back to
+     * DISCONNECTED; a [connect] call that arrives meanwhile waits on it.
+     */
+    private var inFlight: CompletableDeferred<Unit>? = null
     /** Hosts reconnect loops: they must outlive the per-connection scope that just died. Cancelled by [close]. */
     private val reconnectScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val closed = AtomicBoolean(false)
@@ -91,6 +100,20 @@ internal class HubConnectionImpl(
     private val callbacks = ConcurrentHashMap<String, CopyOnWriteArrayList<(List<JsonElement>) -> Unit>>()
     private val pendingInvokes = ConcurrentHashMap<String, CompletableDeferred<JsonElement>>()
 
+    /**
+     * Handlers run here, one call at a time and in arrival order, so a slow handler never stalls
+     * the reader: frames keep flowing, invoke results and pings keep arriving. Lives until [close].
+     */
+    private class HandlerCall(val target: String, val args: List<JsonElement>)
+    private val handlerQueue = Channel<HandlerCall>(Channel.UNLIMITED)
+    private val handlerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    init {
+        handlerScope.launch {
+            for (call in handlerQueue) runHandlers(call)
+        }
+    }
+
     private inline fun log(level: SignalRLogLevel, throwable: Throwable? = null, message: () -> String) =
         logger.log(level, TAG, throwable, message)
 
@@ -100,13 +123,30 @@ internal class HubConnectionImpl(
 
     override suspend fun connect() {
         check(!closed.get()) { "HubConnection is closed; build a new one to connect again." }
+        var inProgress: CompletableDeferred<Unit>? = null
         val scope = synchronized(lock) {
-            if (_connectionState.value != HubConnectionState.DISCONNECTED) {
-                log(SignalRLogLevel.INFO) { "Connect skipped: HubConnection is already ${_connectionState.value}." }
-                return
+            when (_connectionState.value) {
+                HubConnectionState.CONNECTED -> {
+                    log(SignalRLogLevel.INFO) { "Connect skipped: HubConnection is already CONNECTED." }
+                    return
+                }
+                HubConnectionState.CONNECTING, HubConnectionState.RECONNECTING -> {
+                    inProgress = inFlight
+                    null
+                }
+                HubConnectionState.DISCONNECTED -> {
+                    _connectionState.value = HubConnectionState.CONNECTING
+                    inFlight = CompletableDeferred()
+                    newConnectionScope().also { clientScope = it }
+                }
             }
-            _connectionState.value = HubConnectionState.CONNECTING
-            newConnectionScope().also { clientScope = it }
+        }
+        if (scope == null) {
+            // Join the connect or reconnect already in progress: return once it connects, or
+            // throw why it didn't. Cancelling this call leaves that attempt running.
+            log(SignalRLogLevel.INFO) { "Connect is already in progress; waiting for it." }
+            inProgress?.await()
+            return
         }
         log(SignalRLogLevel.INFO) { "Initiating connection to ${withoutQuery(baseUrl)} (skipNegotiate=$skipNegotiate)..." }
 
@@ -118,7 +158,14 @@ internal class HubConnectionImpl(
                 notifyError(t)
             }
             // Whatever got opened before the failure - the WebSocket, the scope - is released here.
-            detach(scope)?.let { release(it) }
+            // Callers waiting on this attempt get the same failure, but never a CancellationException:
+            // only this caller was cancelled, not them.
+            val forWaiters = if (t is CancellationException) {
+                ConnectAbortedException("The connect() call in progress was cancelled.")
+            } else {
+                t
+            }
+            detach(scope, inFlightFailure = forWaiters)?.let { release(it) }
             throw t
         }
     }
@@ -197,6 +244,8 @@ internal class HubConnectionImpl(
             lastReceivedNanos = now
             lastSentNanos = now
             _connectionState.value = HubConnectionState.CONNECTED
+            inFlight?.complete(Unit)
+            inFlight = null
         }
         log(SignalRLogLevel.INFO) { "WebSocket connected successfully! Connection state is now CONNECTED." }
 
@@ -369,7 +418,14 @@ internal class HubConnectionImpl(
 
     private fun dispatchCallbacks(target: String, args: List<JsonElement>) {
         _eventsFlow.tryEmit(SignalREvent(target, args))
+        if (callbacks[target.lowercase()].isNullOrEmpty()) return
+        handlerQueue.trySend(HandlerCall(target, args))
+    }
 
+    /** Runs on [handlerScope]. Handlers are looked up now, so one removed while queued doesn't run. */
+    private fun runHandlers(call: HandlerCall) {
+        val target = call.target
+        val args = call.args
         val handlers = callbacks[target.lowercase()] ?: return
         log(SignalRLogLevel.INFO) { "Dispatching '$target' to ${handlers.size} handler(s)" }
         handlers.forEach { handler ->
@@ -492,6 +548,8 @@ internal class HubConnectionImpl(
         log(SignalRLogLevel.INFO) { "Close requested: disconnecting and releasing the HTTP client." }
         val detached = detach()
         reconnectScope.cancel()
+        handlerQueue.close()
+        handlerScope.cancel()
         // close() must not block, so the graceful WebSocket close runs in the background; the
         // client is closed only after it, or the close frame would never be written.
         CoroutineScope(Dispatchers.IO).launch {
@@ -504,9 +562,13 @@ internal class HubConnectionImpl(
         }
     }
 
-    /** [disconnect] or [close] ran while [connect] was in flight. Thrown to the connect caller only. */
-    private class ConnectAbortedException :
-        IllegalStateException("Connection was disconnected or closed while connecting.")
+    /**
+     * [disconnect] or [close] ran while a connect was in flight, or (for callers waiting on it)
+     * the connect() call doing the work was cancelled.
+     */
+    private class ConnectAbortedException(
+        message: String = "Connection was disconnected or closed while connecting.",
+    ) : IllegalStateException(message)
 
     private class Detached(
         val session: WebSocketSession?,
@@ -515,29 +577,43 @@ internal class HubConnectionImpl(
     )
 
     /**
-     * Synchronously moves to DISCONNECTED and hands back what must be released. With [owner]
+     * Synchronously moves to DISCONNECTED, fails waiting [connect] and [invoke] calls (with
+     * [inFlightFailure], and a [ConnectionLostException] carrying [lostCause]), and hands back
+     * what must be released. With [owner]
      * set, only the connection that started from that scope is torn down, so a stale reader or
      * timer can never kill a newer connection. Returns null when there was nothing to tear down.
      */
-    private fun detach(owner: CoroutineScope? = null): Detached? {
+    private fun detach(
+        owner: CoroutineScope? = null,
+        inFlightFailure: Throwable? = null,
+        lostCause: Throwable? = null,
+        lost: Boolean = false,
+    ): Detached? {
         val detached = synchronized(lock) {
             if (owner != null && clientScope !== owner) return null
             if (_connectionState.value == HubConnectionState.DISCONNECTED) return null
             _connectionState.value = HubConnectionState.DISCONNECTED
+            inFlight?.completeExceptionally(inFlightFailure ?: ConnectAbortedException())
+            inFlight = null
             Detached(session, clientScope, reconnectJob).also {
                 session = null
                 clientScope = null
                 reconnectJob = null
             }
         }
-        cancelPendingInvokes()
+        failPendingInvokes(if (lost) "Connection was lost" else "Connection was closed", lostCause)
         log(SignalRLogLevel.INFO) { "HubConnection is now DISCONNECTED." }
         return detached
     }
 
-    private fun cancelPendingInvokes() {
-        pendingInvokes.values.forEach { it.cancel() }
-        pendingInvokes.clear()
+    /** Fails every [invoke] still waiting for a result with a [ConnectionLostException]. */
+    private fun failPendingInvokes(reason: String, cause: Throwable?) {
+        val ids = pendingInvokes.keys.toList()
+        ids.forEach { id ->
+            pendingInvokes.remove(id)?.completeExceptionally(
+                ConnectionLostException("$reason before the result of invocation '$id' arrived.", cause),
+            )
+        }
     }
 
     /** Closes the WebSocket gracefully, then stops the connection's coroutines and any reconnect loop. */
@@ -558,12 +634,13 @@ internal class HubConnectionImpl(
     private suspend fun onConnectionLost(scope: CoroutineScope, cause: Throwable?, allowReconnect: Boolean) {
         val policy = retryPolicy
         if (policy == null || !allowReconnect) {
-            detach(scope)?.let { release(it) }
+            detach(scope, lostCause = cause, lost = true)?.let { release(it) }
             return
         }
         val detached = synchronized(lock) {
             if (clientScope !== scope || closed.get()) return
             _connectionState.value = HubConnectionState.RECONNECTING
+            inFlight = CompletableDeferred()
             // Launched under the lock, so the loop's ownership check sees reconnectJob already set.
             reconnectJob = reconnectScope.launch { reconnectLoop(policy, cause) }
             Detached(session, clientScope).also {
@@ -571,7 +648,7 @@ internal class HubConnectionImpl(
                 clientScope = null
             }
         }
-        cancelPendingInvokes()
+        failPendingInvokes("Connection was lost", cause)
         log(SignalRLogLevel.INFO, cause) { "Connection lost; HubConnection is now RECONNECTING." }
         release(detached)
     }
@@ -647,6 +724,8 @@ internal class HubConnectionImpl(
             if (reconnectJob !== self) return
             reconnectJob = null
             _connectionState.value = HubConnectionState.DISCONNECTED
+            inFlight?.completeExceptionally(ReconnectFailedException(attempts, reason))
+            inFlight = null
         }
         log(SignalRLogLevel.WARN, reason) { "Giving up reconnecting after $attempts attempt(s); HubConnection is now DISCONNECTED." }
         notifyError(ReconnectFailedException(attempts, reason))
@@ -699,18 +778,30 @@ internal class HubConnectionImpl(
         sendText(activeSession, frameText)
     }
 
-    override suspend fun invoke(method: String, vararg args: Any): JsonElement {
+    override suspend fun invoke(method: String, vararg args: Any, timeoutMs: Long?): JsonElement {
+        require(timeoutMs == null || timeoutMs >= 0) { "timeoutMs must be >= 0, was $timeoutMs" }
+        val effectiveTimeoutMs = timeoutMs ?: invocationTimeoutMs
         val activeSession = requireConnected(method)
         val id = invocationIdCounter.getAndIncrement().toString()
         val deferred = CompletableDeferred<JsonElement>()
         pendingInvokes[id] = deferred
 
         return try {
+            // The connection may have dropped between the check above and registering the call,
+            // after teardown already failed the pending calls; this one would then wait forever.
+            if (session !== activeSession || _connectionState.value != HubConnectionState.CONNECTED) {
+                throw ConnectionLostException("Connection was lost before invocation '$id' was sent.")
+            }
             val frameText = formatOutgoingMessage(method, args, id)
             log(SignalRLogLevel.DEBUG) { "Invoking '${describeMethod(method)}' (id=$id)." }
             log(SignalRLogLevel.VERBOSE) { "Outgoing invocation frame (id=$id): $frameText" }
             sendText(activeSession, frameText)
-            deferred.await()
+            if (effectiveTimeoutMs > 0) {
+                withTimeoutOrNull(effectiveTimeoutMs.milliseconds) { deferred.await() }
+                    ?: throw InvocationTimeoutException(describeMethod(method), effectiveTimeoutMs)
+            } else {
+                deferred.await()
+            }
         } catch (t: Throwable) {
             log(SignalRLogLevel.ERROR, t) { "Invocation '${describeMethod(method)}' (id=$id) failed" }
             throw t

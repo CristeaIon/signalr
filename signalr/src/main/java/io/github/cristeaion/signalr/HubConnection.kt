@@ -33,8 +33,14 @@ interface HubConnection : AutoCloseable {
     val reconnectedFlow: SharedFlow<Unit>
 
     /**
-     * Connects once. A failure is thrown and is not retried, even with automatic reconnect:
-     * that only restores a connection that was established and then dropped.
+     * Connects and returns once the state is CONNECTED. A failure is thrown and is not retried,
+     * even with automatic reconnect: that only restores a connection that was established and
+     * then dropped.
+     *
+     * Already CONNECTED: returns at once. CONNECTING or RECONNECTING: waits for that attempt and
+     * returns when it connects, or throws why it didn't (its error, a [ReconnectFailedException],
+     * or an `IllegalStateException` when [disconnect] or [close] interrupted it). Cancelling a
+     * waiting call doesn't stop the attempt.
      */
     suspend fun connect()
 
@@ -50,12 +56,25 @@ interface HubConnection : AutoCloseable {
     /** Fire-and-forget hub call. */
     suspend fun send(method: String, vararg args: Any)
 
-    /** Hub call that waits for the server's result. Use the reified overload for a typed result. */
-    suspend fun invoke(method: String, vararg args: Any): JsonElement
+    /**
+     * Hub call that waits for the server's result. Use the reified overload for a typed result.
+     *
+     * [timeoutMs] limits the wait (pass it by name: `invoke("Get", id, timeoutMs = 5_000)`).
+     * `null` uses [HubConnectionBuilder.withInvocationTimeout]; `0` waits as long as the
+     * connection lasts. Throws [InvocationTimeoutException] when time runs out, and
+     * [ConnectionLostException] when the connection drops or is disconnected first.
+     */
+    suspend fun invoke(method: String, vararg args: Any, timeoutMs: Long? = null): JsonElement
 
     /**
      * Registers a handler for server-to-client calls to [method], matched case-insensitively.
      * Use the reified overloads to receive decoded arguments instead of raw JSON.
+     *
+     * Handlers run on a background thread (never Main), one at a time and in the order the
+     * server sent the calls. They don't hold up the connection: frames, pings and invoke results
+     * keep arriving while a handler runs. Still keep them short, since a slow handler delays the
+     * handlers after it. Hand long work to your own coroutine. Calls queued while
+     * [Subscription.cancel] runs are skipped. An exception thrown by a handler goes to [errorFlow].
      */
     fun on(method: String, handler: (List<JsonElement>) -> Unit): Subscription
 }

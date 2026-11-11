@@ -32,8 +32,8 @@ inline fun <reified T1, reified T2, reified T3> HubConnection.on(
  * Typed result variant of [HubConnection.invoke]. The explicit type argument selects this over the
  * raw member, which is what the body below calls.
  */
-suspend inline fun <reified T> HubConnection.invoke(method: String, vararg args: Any): T {
-    val result: JsonElement = invoke(method, *args)
+suspend inline fun <reified T> HubConnection.invoke(method: String, vararg args: Any, timeoutMs: Long? = null): T {
+    val result: JsonElement = invoke(method, *args, timeoutMs = timeoutMs)
     return decodeJsonElementSafe(result)
 }
 
