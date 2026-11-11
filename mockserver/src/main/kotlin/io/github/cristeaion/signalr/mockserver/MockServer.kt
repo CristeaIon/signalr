@@ -20,7 +20,9 @@ import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
 import io.ktor.websocket.readText
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -40,18 +42,26 @@ val DEMO_USERS = linkedMapOf(
  *
  * Login:   GET  /api/login?appid=&timestamp=&rq=[{"action":"Login","args":{"userName":..,"password":..}}]
  * SignalR: /signalr/negotiate, /signalr/connect (WebSocket), /signalr/start, /signalr/abort, /signalr/ping
- * Faults:  POST /mock/control/{reject-next-negotiate|fail-next-invoke|drop-all|init-delay?ms=N|reset}
+ * Faults:  POST /mock/control/{reject-next-negotiate|fail-next-invoke|drop-all|init-delay?ms=N|silence|reset}
+ *
+ * Like a real SignalR 2.x server, it sends a `{}` keep-alive every [keepAliveIntervalMs] and
+ * announces twice that as `KeepAliveTimeout` during negotiate.
  */
 class MockServer(
     private val host: String = "127.0.0.1",
     users: Map<String, String> = DEMO_USERS,
+    private val keepAliveIntervalMs: Long = DEFAULT_KEEP_ALIVE_INTERVAL_MS,
 ) {
+    companion object {
+        const val DEFAULT_KEEP_ALIVE_INTERVAL_MS: Long = 10_000
+    }
+
     val hub = ChatHub(users)
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
 
     /** Starts the server and returns the bound port; pass 0 to pick a free one. */
     fun start(port: Int = 0): Int {
-        val embedded = embeddedServer(CIO, port = port, host = host) { module(hub) }
+        val embedded = embeddedServer(CIO, port = port, host = host) { module(hub, keepAliveIntervalMs) }
         embedded.start(wait = false)
         server = embedded
         return runBlocking { embedded.engine.resolvedConnectors().first().port }
@@ -63,14 +73,14 @@ class MockServer(
     }
 }
 
-internal fun Application.module(hub: ChatHub) {
+internal fun Application.module(hub: ChatHub, keepAliveIntervalMs: Long) {
     install(WebSockets)
     routing {
         get("/api/login") { handleLogin(hub) }
 
         route("/signalr") {
-            get("/negotiate") { handleNegotiate(hub) }
-            post("/negotiate") { handleNegotiate(hub) }
+            get("/negotiate") { handleNegotiate(hub, keepAliveIntervalMs) }
+            post("/negotiate") { handleNegotiate(hub, keepAliveIntervalMs) }
             get("/start") {
                 val connection = hub.connection(call.request.queryParameters["connectionToken"])
                 if (connection == null) {
@@ -91,14 +101,22 @@ internal fun Application.module(hub: ChatHub) {
                     return@webSocket
                 }
                 connection.socket = this
+                var keepAlive: Job? = null
                 try {
                     delay(hub.faults.initFrameDelayMs)
                     send(Frame.Text(hub.initFrame()))
+                    keepAlive = launch {
+                        while (true) {
+                            delay(keepAliveIntervalMs)
+                            if (!hub.faults.silent.get()) runCatching { send(Frame.Text("{}")) }
+                        }
+                    }
                     for (frame in incoming) {
                         if (frame !is Frame.Text) continue
                         hub.handleClientFrame(connection, frame.readText())?.let { send(Frame.Text(it)) }
                     }
                 } finally {
+                    keepAlive?.cancel()
                     hub.close(connection)
                 }
             }
@@ -110,6 +128,7 @@ internal fun Application.module(hub: ChatHub) {
                 "reject-next-negotiate" -> faults.rejectNextNegotiate.set(true)
                 "fail-next-invoke" -> faults.failNextInvoke.set(true)
                 "drop-all" -> hub.dropAll()
+                "silence" -> faults.silent.set(true)
                 "init-delay" -> faults.initFrameDelayMs = call.request.queryParameters["ms"]?.toLongOrNull() ?: 0
                 "reset" -> faults.reset()
                 else -> {
@@ -142,7 +161,7 @@ private suspend fun RoutingContext.handleLogin(hub: ChatHub) {
     }
 }
 
-private suspend fun RoutingContext.handleNegotiate(hub: ChatHub) {
+private suspend fun RoutingContext.handleNegotiate(hub: ChatHub, keepAliveIntervalMs: Long) {
     if (hub.faults.rejectNextNegotiate.compareAndSet(true, false)) {
         respondJson("""{"Error":"Mock negotiate failure"}""", HttpStatusCode.InternalServerError)
         return
@@ -155,7 +174,7 @@ private suspend fun RoutingContext.handleNegotiate(hub: ChatHub) {
     val connection = hub.openConnection(user)
     respondJson(
         """{"Url":"/signalr","ConnectionToken":"${connection.token}","ConnectionId":"${connection.token}",""" +
-            """"KeepAliveTimeout":20.0,"DisconnectTimeout":30.0,"TryWebSockets":true,""" +
+            """"KeepAliveTimeout":${keepAliveIntervalMs * 2 / 1000.0},"DisconnectTimeout":30.0,"TryWebSockets":true,""" +
             """"ProtocolVersion":"1.5","TransportConnectTimeout":5.0}"""
     )
 }

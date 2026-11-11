@@ -12,10 +12,16 @@ class HubConnectionBuilder private constructor(private val url: String) {
     private var accessTokenProvider: (suspend () -> String?)? = null
     private var skipNegotiate: Boolean = false
     private var handshakeTimeoutMs: Long = 15_000L
+    private var keepAliveIntervalMs: Long = DEFAULT_KEEP_ALIVE_INTERVAL_MS
+    private var serverTimeoutMs: Long = DEFAULT_SERVER_TIMEOUT_MS
     private var logger: SignalRLogger? = null
     private var logLevel: SignalRLogLevel = SignalRLogLevel.DEBUG
 
     companion object {
+        /** Same defaults as the official ASP.NET Core clients. */
+        const val DEFAULT_KEEP_ALIVE_INTERVAL_MS: Long = 15_000L
+        const val DEFAULT_SERVER_TIMEOUT_MS: Long = 30_000L
+
         fun create(url: String): HubConnectionBuilder {
             return HubConnectionBuilder(url)
         }
@@ -53,6 +59,30 @@ class HubConnectionBuilder private constructor(private val url: String) {
         return this
     }
 
+    /**
+     * How often to send a ping when nothing else has been sent, so the server knows the client
+     * is alive. ASP.NET Core servers only; classic servers keep the connection alive themselves.
+     * `0` turns pinging off. Keep it at most half the server's `ClientTimeoutInterval`.
+     */
+    fun withKeepAliveInterval(intervalInMilliseconds: Long): HubConnectionBuilder {
+        require(intervalInMilliseconds >= 0) { "Keep-alive interval must be >= 0, was $intervalInMilliseconds" }
+        this.keepAliveIntervalMs = intervalInMilliseconds
+        return this
+    }
+
+    /**
+     * How long the connection may go without receiving anything before it is treated as lost:
+     * it is closed, the state becomes DISCONNECTED and a [ServerTimeoutException] reaches
+     * [HubConnection.errorFlow]. Keep it at least twice the server's `KeepAliveInterval`.
+     * Classic servers announce their own `KeepAliveTimeout` during negotiate, which wins.
+     * `0` turns the timeout off.
+     */
+    fun withServerTimeout(timeoutInMilliseconds: Long): HubConnectionBuilder {
+        require(timeoutInMilliseconds >= 0) { "Server timeout must be >= 0, was $timeoutInMilliseconds" }
+        this.serverTimeoutMs = timeoutInMilliseconds
+        return this
+    }
+
     fun shouldSkipNegotiate(skipNegotiate: Boolean): HubConnectionBuilder {
         this.skipNegotiate = skipNegotiate
         return this
@@ -75,7 +105,9 @@ class HubConnectionBuilder private constructor(private val url: String) {
             accessTokenProvider,
             skipNegotiate,
             effectiveLogger,
-            handshakeTimeoutMs
+            handshakeTimeoutMs,
+            keepAliveIntervalMs,
+            serverTimeoutMs
         )
     }
 }

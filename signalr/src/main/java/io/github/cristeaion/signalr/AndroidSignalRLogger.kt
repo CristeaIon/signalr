@@ -6,8 +6,10 @@ import android.util.Log
 class AndroidSignalRLogger(
     private val minLevel: SignalRLogLevel = SignalRLogLevel.DEBUG
 ) : SignalRLogger {
+    override fun isLoggable(level: SignalRLogLevel): Boolean = level.isAtLeast(minLevel)
+
     override fun log(level: SignalRLogLevel, tag: String, message: String, throwable: Throwable?) {
-        if (level < minLevel || level == SignalRLogLevel.NONE) return
+        if (!isLoggable(level)) return
 
         when (level) {
             SignalRLogLevel.VERBOSE -> Log.v(tag, message, throwable)

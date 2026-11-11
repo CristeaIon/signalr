@@ -123,6 +123,16 @@ class HubConnectionTest {
     }
 
     @Test
+    fun testWithoutQueryDropsCredentials() {
+        assertEquals(
+            "https://example.com/signalr/negotiate?…",
+            withoutQuery("https://example.com/signalr/negotiate?connectionData=[]&sessionId=secret")
+        )
+        assertEquals("https://example.com/chathub", withoutQuery("https://example.com/chathub"))
+        assertEquals("https://example.com/chathub?…", withoutQuery("https://example.com/chathub#frag"))
+    }
+
+    @Test
     fun testIsClassicSignalRUrl() {
         assertTrue(isClassicSignalRUrl("https://example.com/signalr/negotiate"))
         assertTrue(isClassicSignalRUrl("https://example.com/hub?connectionData=[]"))
